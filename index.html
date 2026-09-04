@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>سوق تيليجرام</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: #f5f7fa;
+      color: #222;
+    }
+
+    header {
+      background: #229ED9;
+      color: white;
+      padding: 22px 15px;
+      text-align: center;
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 25px;
+    }
+
+    header p {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: auto;
+      padding: 20px 15px 40px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 15px;
+      padding: 20px;
+      margin-bottom: 15px;
+      box-shadow: 0 3px 12px rgba(0,0,0,0.08);
+    }
+
+    .card h2 {
+      margin-top: 0;
+      font-size: 20px;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 15px;
+      margin-top: 10px;
+      font-size: 16px;
+      cursor: pointer;
+      background: #229ED9;
+      color: white;
+    }
+
+    button.secondary {
+      background: #eef2f5;
+      color: #222;
+    }
+
+    .fee {
+      background: #fff8e1;
+      padding: 12px;
+      border-radius: 10px;
+      margin-top: 15px;
+      line-height: 1.7;
+    }
+
+    footer {
+      text-align: center;
+      color: #777;
+      font-size: 13px;
+      margin-top: 25px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <h1>🛍️ سوق تيليجرام</h1>
+    <p>سوق خاص وآمن للشراء والبيع والتفاوض</p>
+  </header>
+
+  <div class="container">
+
+    <div class="card">
+      <h2>مرحبًا بك 👋</h2>
+
+      <p>
+        هنا يمكنك عرض منتجاتك للبيع، أو نشر طلب لشراء منتج،
+        ثم التفاوض مع الطرف الآخر وإتمام الصفقة بشكل خاص.
+      </p>
+
+      <div class="fee">
+        💰 عمولة المنصة: <strong>5%</strong><br>
+        2.5% على المشتري + 2.5% على البائع.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🛍️ السوق</h2>
+
+      <button onclick="showMessage('شراء')">
+        🛒 أريد شراء
+      </button>
+
+      <button onclick="showMessage('بيع')">
+        📦 أريد بيع
+      </button>
+    </div>
+
+    <div class="card">
+      <h2>💬🤝 التفاوض وإتمام الصفقة</h2>
+
+      <p>
+        جميع المفاوضات والاتفاقات تتم بشكل خاص بين الطرفين.
+      </p>
+
+      <button onclick="showMessage('تفاوض')">
+        💬 مفاوضاتي
+      </button>
+
+      <button onclick="showMessage('صفقات')">
+        🤝 صفقاتي
+      </button>
+    </div>
+
+    <div class="card">
+      <h2>👤 حسابي</h2>
+
+      <button onclick="showMessage('الحساب')">
+        👤 بيانات حسابي
+      </button>
+
+      <button onclick="showMessage('الطلبات')">
+        🛒 طلباتي للشراء
+      </button>
+
+      <button onclick="showMessage('العروض')">
+        📦 عروضي للبيع
+      </button>
+
+      <button onclick="showMessage('التقييم')">
+        ⭐ تقييمي
+      </button>
+
+      <button class="secondary" onclick="showMessage('الإعدادات')">
+        ⚙️ إعدادات المنصة
+      </button>
+
+      <button class="secondary" onclick="showMessage('الشروط')">
+        📖 الشروط والخصوصية
+      </button>
+    </div>
+
+    <footer>
+      Telegram Marketplace © 2026
+    </footer>
+
+  </div>
+
+  <script>
+    function showMessage(section) {
+      alert("سيتم فتح قسم: " + section);
+    }
+  </script>
+
+</body>
+</html>
