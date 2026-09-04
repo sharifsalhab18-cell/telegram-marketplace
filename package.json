@@ -1,0 +1,10 @@
+{
+  "name": "telegram-marketplace",
+  "version": "1.0.0",
+  "description": "Private Telegram marketplace for buying and selling",
+  "main": "netlify/functions/telegram-webhook.js",
+  "scripts": {
+    "start": "node netlify/functions/telegram-webhook.js"
+  },
+  "dependencies": {}
+}
