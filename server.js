@@ -5,6 +5,10 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 const sessions = {};
 
+// =========================
+// TELEGRAM
+// =========================
+
 async function sendTelegram(chatId, text, replyMarkup = null) {
   const body = {
     chat_id: chatId,
@@ -15,7 +19,7 @@ async function sendTelegram(chatId, text, replyMarkup = null) {
     body.reply_markup = replyMarkup;
   }
 
-  await fetch(
+  const response = await fetch(
     `https://api.telegram.org/bot${TOKEN}/sendMessage`,
     {
       method: "POST",
@@ -25,10 +29,14 @@ async function sendTelegram(chatId, text, replyMarkup = null) {
       body: JSON.stringify(body)
     }
   );
+
+  if (!response.ok) {
+    console.error("Telegram sendMessage error:", await response.text());
+  }
 }
 
 async function answerCallback(callbackId) {
-  await fetch(
+  const response = await fetch(
     `https://api.telegram.org/bot${TOKEN}/answerCallbackQuery`,
     {
       method: "POST",
@@ -40,7 +48,18 @@ async function answerCallback(callbackId) {
       })
     }
   );
+
+  if (!response.ok) {
+    console.error(
+      "Telegram answerCallbackQuery error:",
+      await response.text()
+    );
+  }
 }
+
+// =========================
+// MAIN WEBHOOK
+// =========================
 
 async function handleWebhook(body) {
 
@@ -49,7 +68,14 @@ async function handleWebhook(body) {
   // =========================
 
   if (body.callback_query) {
+
     const query = body.callback_query;
+
+    if (!query.message) {
+      await answerCallback(query.id);
+      return;
+    }
+
     const chatId = query.message.chat.id;
 
     // =========================
@@ -57,6 +83,7 @@ async function handleWebhook(body) {
     // =========================
 
     if (query.data === "agree") {
+
       await sendTelegram(
         chatId,
         "🛍️ أهلاً بك في السوق!\n\n" +
@@ -100,6 +127,7 @@ async function handleWebhook(body) {
     // =========================
 
     if (query.data === "buy") {
+
       sessions[chatId] = {
         step: "buy_product"
       };
@@ -119,6 +147,7 @@ async function handleWebhook(body) {
     // =========================
 
     if (query.data === "sell") {
+
       sessions[chatId] = {
         step: "sell_product"
       };
@@ -133,11 +162,44 @@ async function handleWebhook(body) {
       return;
     }
 
+    // =========================
+    // NEGOTIATE
+    // =========================
+
+    if (query.data === "negotiate") {
+
+      await sendTelegram(
+        chatId,
+        "💬 التفاوض وإتمام الصفقة\n\n" +
+        "سيتم تجهيز هذه الخدمة بعد الانتهاء من خطوات الشراء والبيع."
+      );
+
+      await answerCallback(query.id);
+      return;
+    }
+
+    // =========================
+    // ACCOUNT
+    // =========================
+
+    if (query.data === "account") {
+
+      await sendTelegram(
+        chatId,
+        "👤 حسابي\n\n" +
+        "سيتم تجهيز حساب المستخدم في خطوة لاحقة."
+      );
+
+      await answerCallback(query.id);
+      return;
+    }
+
+    await answerCallback(query.id);
     return;
   }
 
   // =========================
-  // MESSAGES
+  // MESSAGE
   // =========================
 
   if (!body.message) {
@@ -145,53 +207,18 @@ async function handleWebhook(body) {
   }
 
   const chatId = body.message.chat.id;
-  const text = body.message.text || "";
-
-  // =========================
-  // BUY PRODUCT
-  // =========================
-
-  if (sessions[chatId]?.step === "buy_product") {
-    sessions[chatId].product = text;
-    sessions[chatId].step = "buy_details";
-
-    await sendTelegram(
-      chatId,
-      "🔎 ممتاز.\n\n" +
-      "المنتج المطلوب:\n" +
-      text +
-      "\n\n" +
-      "سنكمل الآن تفاصيل الشراء."
-    );
-
-    return;
-  }
-
-  // =========================
-  // SELL PRODUCT
-  // =========================
-
-  if (sessions[chatId]?.step === "sell_product") {
-    sessions[chatId].product = text;
-    sessions[chatId].step = "sell_details";
-
-    await sendTelegram(
-      chatId,
-      "📦 ممتاز.\n\n" +
-      "المنتج المعروض للبيع:\n" +
-      text +
-      "\n\n" +
-      "سنكمل الآن تفاصيل العرض."
-    );
-
-    return;
-  }
+  const text = (body.message.text || "").trim();
 
   // =========================
   // START
   // =========================
 
   if (text === "/start") {
+
+    sessions[chatId] = {
+      step: "start"
+    };
+
     await sendTelegram(
       chatId,
       "🛍️ مرحباً بك في سوق تيليجرام\n\n" +
@@ -214,6 +241,149 @@ async function handleWebhook(body) {
 
     return;
   }
+
+  // =========================
+  // BUY - PRODUCT
+  // =========================
+
+  if (sessions[chatId]?.step === "buy_product") {
+
+    if (!text) {
+      await sendTelegram(
+        chatId,
+        "⚠️ أرسل اسم المنتج من فضلك."
+      );
+      return;
+    }
+
+    sessions[chatId].product = text;
+    sessions[chatId].step = "buy_max_price";
+
+    await sendTelegram(
+      chatId,
+      "🛒 المنتج:\n" +
+      text +
+      "\n\n" +
+      "💰 الآن أرسل أقصى سعر تريد دفعه للمنتج.\n\n" +
+      "مثال: 25000"
+    );
+
+    return;
+  }
+
+  // =========================
+  // BUY - MAX PRICE
+  // =========================
+
+  if (sessions[chatId]?.step === "buy_max_price") {
+
+    const normalizedPrice = text
+      .replace(/\s/g, "")
+      .replace(",", ".");
+
+    const price = Number(normalizedPrice);
+
+    if (!Number.isFinite(price) || price <= 0) {
+
+      await sendTelegram(
+        chatId,
+        "⚠️ السعر غير صحيح.\n\n" +
+        "أرسل رقمًا صحيحًا.\n\n" +
+        "مثال: 25000"
+      );
+
+      return;
+    }
+
+    sessions[chatId].maxPrice = price;
+    sessions[chatId].step = "buy_region";
+
+    await sendTelegram(
+      chatId,
+      "💰 أقصى سعر للشراء: " +
+      price +
+      "\n\n" +
+      "📍 الآن أرسل المنطقة أو المدينة التي تريد البحث فيها.\n\n" +
+      "مثال: Київ"
+    );
+
+    return;
+  }
+
+  // =========================
+  // BUY - REGION
+  // =========================
+
+  if (sessions[chatId]?.step === "buy_region") {
+
+    if (!text) {
+      await sendTelegram(
+        chatId,
+        "⚠️ أرسل اسم المنطقة أو المدينة."
+      );
+      return;
+    }
+
+    sessions[chatId].region = text;
+    sessions[chatId].step = "buy_summary";
+
+    const session = sessions[chatId];
+
+    await sendTelegram(
+      chatId,
+      "✅ تم تسجيل طلب الشراء.\n\n" +
+      "🛒 المنتج: " +
+      session.product +
+      "\n" +
+      "💰 أقصى سعر: " +
+      session.maxPrice +
+      "\n" +
+      "📍 المنطقة: " +
+      session.region +
+      "\n\n" +
+      "📋 بيانات الطلب مكتملة.\n\n" +
+      "الخطوة التالية ستكون تجهيز عملية البحث عن المنتج."
+    );
+
+    return;
+  }
+
+  // =========================
+  // SELL - PRODUCT
+  // =========================
+
+  if (sessions[chatId]?.step === "sell_product") {
+
+    if (!text) {
+      await sendTelegram(
+        chatId,
+        "⚠️ أرسل اسم المنتج من فضلك."
+      );
+      return;
+    }
+
+    sessions[chatId].product = text;
+    sessions[chatId].step = "sell_details";
+
+    await sendTelegram(
+      chatId,
+      "📦 المنتج المعروض للبيع:\n" +
+      text +
+      "\n\n" +
+      "سيتم تجهيز تفاصيل البيع في الخطوة التالية."
+    );
+
+    return;
+  }
+
+  // =========================
+  // UNKNOWN MESSAGE
+  // =========================
+
+  await sendTelegram(
+    chatId,
+    "ℹ️ استخدم /start للبدء من جديد."
+  );
 }
 
 
@@ -221,13 +391,14 @@ async function handleWebhook(body) {
 // HTTP SERVER
 // =========================
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
 
   // =========================
   // HOME
   // =========================
 
   if (req.method === "GET" && req.url === "/") {
+
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8"
     });
@@ -255,6 +426,7 @@ const server = http.createServer(async (req, res) => {
   // =========================
 
   if (req.method === "POST" && req.url === "/webhook") {
+
     let data = "";
 
     req.on("data", chunk => {
@@ -262,7 +434,9 @@ const server = http.createServer(async (req, res) => {
     });
 
     req.on("end", async () => {
+
       try {
+
         const body = JSON.parse(data);
 
         await handleWebhook(body);
@@ -274,6 +448,7 @@ const server = http.createServer(async (req, res) => {
         res.end("OK");
 
       } catch (error) {
+
         console.error("Webhook error:", error);
 
         res.writeHead(500, {
@@ -294,6 +469,11 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404);
   res.end("Not Found");
 });
+
+
+// =========================
+// START SERVER
+// =========================
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(
