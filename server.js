@@ -46,18 +46,42 @@ async function handleWebhook(body) {
     const chatId = query.message.chat.id;
 
     if (query.data === "agree") {
-      await sendTelegram(
-        chatId,
-        "🛍️ أهلاً بك في السوق!\n\n" +
-        "اختر ما تريد:\n\n" +
-        "🛒 أريد شراء\n" +
-        "📦 أريد بيع\n" +
-        "💬 التفاوض وإتمام الصفقة\n" +
-        "👤 حسابي"
-      );
-
-      await answerCallback(query.id);
+  await sendTelegram(
+    chatId,
+    "🛍️ أهلاً بك في السوق!\n\n" +
+    "اختر ما تريد:",
+    {
+      inline_keyboard: [
+        [
+          {
+            text: "🛒 أريد شراء",
+            callback_data: "buy"
+          }
+        ],
+        [
+          {
+            text: "📦 أريد بيع",
+            callback_data: "sell"
+          }
+        ],
+        [
+          {
+            text: "💬 التفاوض وإتمام الصفقة",
+            callback_data: "negotiate"
+          }
+        ],
+        [
+          {
+            text: "👤 حسابي",
+            callback_data: "account"
+          }
+        ]
+      ]
     }
+  );
+
+  await answerCallback(query.id);
+}
 
     return;
   }
