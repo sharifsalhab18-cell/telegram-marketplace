@@ -2,11 +2,9 @@
   "name": "telegram-marketplace",
   "version": "1.0.0",
   "description": "Private Telegram marketplace for buying and selling",
-  "main": "worker.js",
+  "main": "server.js",
   "scripts": {
-    "start": "wrangler dev --local --ip 0.0.0.0 --port ${PORT:-5000}"
+    "start": "node server.js"
   },
-  "dependencies": {
-    "wrangler": "^4.35.0"
-  }
+  "dependencies": {}
 }
