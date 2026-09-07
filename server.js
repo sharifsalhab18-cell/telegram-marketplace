@@ -1,11 +1,19 @@
 const http = require("http");
 
 const PORT = process.env.PORT || 5000;
-
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const APIFY_TOKEN = process.env.APIFY_API_TOKEN;
 
 const sessions = {};
+
+// ======================================================
+// MARKETPLACE
+// ======================================================
+
+// التخزين الحالي مؤقت في الذاكرة.
+// لاحقًا سنربطه بقاعدة بيانات حتى لا تختفي العروض عند إعادة تشغيل Render.
+const listings = [];
+
+let nextListingId = 1;
 
 
 // ======================================================
@@ -66,6 +74,47 @@ async function answerCallback(callbackId) {
 
 
 // ======================================================
+// MAIN MENU
+// ======================================================
+
+async function showMainMenu(chatId) {
+  await sendTelegram(
+    chatId,
+    "🛍️ أهلاً بك في سوق تيليجرام!\n\n" +
+    "اختر ما تريد:",
+    {
+      inline_keyboard: [
+        [
+          {
+            text: "🛒 أريد شراء",
+            callback_data: "buy"
+          }
+        ],
+        [
+          {
+            text: "📦 أريد بيع",
+            callback_data: "sell"
+          }
+        ],
+        [
+          {
+            text: "💬 التفاوض وإتمام الصفقة",
+            callback_data: "negotiate"
+          }
+        ],
+        [
+          {
+            text: "👤 حسابي",
+            callback_data: "account"
+          }
+        ]
+      ]
+    }
+  );
+}
+
+
+// ======================================================
 // PRICE
 // ======================================================
 
@@ -95,231 +144,136 @@ function formatPrice(price) {
 
 
 // ======================================================
-// OLX / APIFY
+// TEXT NORMALIZATION
 // ======================================================
 
-async function searchOLX(product, maxPrice, region) {
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase();
+}
 
-  if (!APIFY_TOKEN) {
-    throw new Error("APIFY_API_TOKEN is not configured");
-  }
 
-  /*
-   * We search OLX using the actor we selected:
-   * maroon_trio/olx-ua-scraper-parser
-   *
-   * The actor accepts an OLX URL as input.
-   */
+// ======================================================
+// INTERNAL MARKETPLACE SEARCH
+// ======================================================
 
-  const searchText = region
-    ? `${product} ${region}`
-    : product;
+function searchListings(product, maxPrice, region) {
+  const wantedProduct = normalizeText(product);
+  const wantedRegion = normalizeText(region);
 
-  const encodedQuery = encodeURIComponent(searchText);
+  const results = listings.filter((listing) => {
 
-  const olxUrl =
-    `https://www.olx.ua/uk/list/q-${encodedQuery}/`;
+    if (listing.status !== "active") {
+      return false;
+    }
 
-  const apiUrl =
-    `https://api.apify.com/v2/acts/` +
-    `maroon_trio~olx-ua-scraper-parser/` +
-    `run-sync-get-dataset-items?token=${encodeURIComponent(APIFY_TOKEN)}`;
+    if (listing.price > maxPrice) {
+      return false;
+    }
 
-  console.log("OLX search:", olxUrl);
+    const listingProduct =
+      normalizeText(listing.product);
 
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      url: olxUrl
-    })
+    const listingRegion =
+      normalizeText(listing.region);
+
+    const productMatch =
+      listingProduct.includes(wantedProduct) ||
+      wantedProduct.includes(listingProduct);
+
+    if (!productMatch) {
+      return false;
+    }
+
+    // إذا كتب المشتري "الكل" نبحث في جميع المناطق.
+    if (
+      wantedRegion &&
+      wantedRegion !== "الكل" &&
+      wantedRegion !== "будь-яка" &&
+      !listingRegion.includes(wantedRegion) &&
+      !wantedRegion.includes(listingRegion)
+    ) {
+      return false;
+    }
+
+    return true;
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-
-    console.error(
-      "Apify error:",
-      response.status,
-      errorText
-    );
-
-    throw new Error(
-      `Apify request failed: ${response.status}`
-    );
-  }
-
-  const items = await response.json();
-
-  if (!Array.isArray(items)) {
-    console.error("Unexpected Apify response:", items);
-    return [];
-  }
-
-  console.log(
-    `Apify returned ${items.length} items`
-  );
-
-  // ----------------------------------------------------
-  // Normalize results
-  // ----------------------------------------------------
-
-  const results = [];
-
-  for (const item of items) {
-
-    const title =
-      item.title ||
-      item.name ||
-      item.heading ||
-      item.adTitle ||
-      "";
-
-    const url =
-      item.url ||
-      item.link ||
-      item.adUrl ||
-      item.listingUrl ||
-      "";
-
-    const location =
-      item.location ||
-      item.city ||
-      item.region ||
-      item.address ||
-      "";
-
-    let price =
-      item.price ??
-      item.priceValue ??
-      item.amount ??
-      item.priceUAH ??
-      null;
-
-    // Some scrapers return price as an object
-    if (
-      price &&
-      typeof price === "object"
-    ) {
-      price =
-        price.value ??
-        price.amount ??
-        price.raw ??
-        null;
-    }
-
-    // Convert string price to number
-    if (typeof price === "string") {
-
-      const numeric = price
-        .replace(/\s/g, "")
-        .replace(/[^0-9.,]/g, "")
-        .replace(",", ".");
-
-      price = Number(numeric);
-    }
-
-    if (
-      typeof price !== "number" ||
-      !Number.isFinite(price)
-    ) {
-      price = null;
-    }
-
-    const description =
-      item.description ||
-      item.shortDescription ||
-      "";
-
-    const image =
-      item.image ||
-      item.imageUrl ||
-      item.photo ||
-      item.thumbnail ||
-      "";
-
-    // --------------------------------------------------
-    // Filter by maximum purchase price
-    // --------------------------------------------------
-
-    if (
-      price !== null &&
-      price > maxPrice
-    ) {
-      continue;
-    }
-
-    results.push({
-      title: title || product,
-      price,
-      location,
-      description,
-      image,
-      url
-    });
-  }
-
-  // ----------------------------------------------------
-  // Sort: cheapest first
-  // ----------------------------------------------------
-
   results.sort((a, b) => {
-
-    if (a.price === null) return 1;
-    if (b.price === null) return -1;
-
     return a.price - b.price;
   });
 
-  // Maximum results shown to user
   return results.slice(0, 10);
 }
 
 
 // ======================================================
-// SEND OLX RESULTS
+// SEND MARKETPLACE RESULTS
 // ======================================================
 
-async function sendOLXResults(chatId, session, results) {
+async function sendMarketplaceResults(
+  chatId,
+  session,
+  results
+) {
 
   if (!results.length) {
 
     await sendTelegram(
       chatId,
-      "🔎 انتهى البحث في OLX.ua.\n\n" +
-      "لم نجد إعلانات مطابقة لأقصى سعر محدد.\n\n" +
+      "🔎 انتهى البحث في سوقنا.\n\n" +
+      "لم نجد حاليًا عروضًا مطابقة لطلبك.\n\n" +
       `🛒 المنتج: ${session.product}\n` +
       `💰 أقصى سعر: ${formatPrice(session.maxPrice)}\n` +
       `📍 المنطقة: ${session.region}\n\n` +
-      "يمكنك تجربة سعر أعلى أو منطقة أخرى."
+      "يمكنك تجربة منتج آخر أو سعر أعلى."
+    );
+
+    await sendTelegram(
+      chatId,
+      "ماذا تريد أن تفعل؟",
+      {
+        inline_keyboard: [
+          [
+            {
+              text: "🔄 بحث جديد",
+              callback_data: "buy"
+            }
+          ],
+          [
+            {
+              text: "🏠 القائمة الرئيسية",
+              callback_data: "menu"
+            }
+          ]
+        ]
+      }
     );
 
     return;
   }
 
+
   await sendTelegram(
     chatId,
-    "🔎 تم العثور على إعلانات في OLX.ua.\n\n" +
+    "🔎 وجدنا عروضًا في سوقنا!\n\n" +
     `🛒 المنتج: ${session.product}\n` +
     `💰 أقصى سعر: ${formatPrice(session.maxPrice)}\n` +
     `📍 المنطقة: ${session.region}\n\n` +
-    `📋 عدد النتائج المناسبة: ${results.length}`
+    `📋 عدد العروض المناسبة: ${results.length}`
   );
+
 
   for (let i = 0; i < results.length; i++) {
 
     const item = results[i];
 
     let message =
-      `📌 نتيجة ${i + 1}\n\n` +
-      `🛒 ${item.title}\n` +
-      `💰 السعر: ${formatPrice(item.price)}\n`;
-
-    if (item.location) {
-      message += `📍 ${item.location}\n`;
-    }
+      `📌 عرض رقم #${item.id}\n\n` +
+      `🛒 ${item.product}\n` +
+      `💰 السعر: ${formatPrice(item.price)}\n` +
+      `📍 المنطقة: ${item.region}\n`;
 
     if (item.description) {
 
@@ -328,25 +282,132 @@ async function sendOLXResults(chatId, session, results) {
           .replace(/\s+/g, " ")
           .trim();
 
-      if (shortDescription.length > 300) {
+      if (shortDescription.length > 400) {
         shortDescription =
-          shortDescription.slice(0, 300) + "...";
+          shortDescription.slice(0, 400) + "...";
       }
 
       message +=
         `\n📝 ${shortDescription}\n`;
     }
 
-    if (item.url) {
-      message +=
-        `\n🔗 ${item.url}`;
-    }
 
     await sendTelegram(
       chatId,
-      message
+      message,
+      {
+        inline_keyboard: [
+          [
+            {
+              text: "💬 تواصل مع البائع",
+              callback_data: `contact_${item.id}`
+            }
+          ]
+        ]
+      }
     );
   }
+
+
+  await sendTelegram(
+    chatId,
+    "هل تريد إجراء بحث آخر؟",
+    {
+      inline_keyboard: [
+        [
+          {
+            text: "🔄 بحث جديد",
+            callback_data: "buy"
+          }
+        ],
+        [
+          {
+            text: "🏠 القائمة الرئيسية",
+            callback_data: "menu"
+          }
+        ]
+      ]
+    }
+  );
+}
+
+
+// ======================================================
+// CREATE LISTING
+// ======================================================
+
+function createListing(chatId, session) {
+
+  const listing = {
+    id: nextListingId++,
+
+    sellerChatId: chatId,
+
+    product: session.product,
+
+    description: session.description,
+
+    price: session.price,
+
+    region: session.region,
+
+    status: "active",
+
+    createdAt: new Date().toISOString()
+  };
+
+  listings.push(listing);
+
+  return listing;
+}
+
+
+// ======================================================
+// CONTACT SELLER
+// ======================================================
+
+async function contactSeller(
+  buyerChatId,
+  listingId
+) {
+
+  const listing = listings.find(
+    (item) =>
+      item.id === listingId &&
+      item.status === "active"
+  );
+
+
+  if (!listing) {
+
+    await sendTelegram(
+      buyerChatId,
+      "❌ هذا العرض لم يعد متاحًا."
+    );
+
+    return;
+  }
+
+
+  // لا نعرض رقم أو معرف البائع للمشتري.
+  // التواصل يتم من خلال البوت.
+
+  await sendTelegram(
+    listing.sellerChatId,
+    "📩 لديك مشتري مهتم بعرضك!\n\n" +
+    `🆔 رقم العرض: #${listing.id}\n` +
+    `🛒 المنتج: ${listing.product}\n` +
+    `💰 السعر: ${formatPrice(listing.price)}\n` +
+    `📍 المنطقة: ${listing.region}\n\n` +
+    "يمكنك الرد على المشتري من خلال المحادثة مع البوت."
+  );
+
+
+  await sendTelegram(
+    buyerChatId,
+    "✅ تم إرسال طلب التواصل إلى البائع.\n\n" +
+    "سيتم إبلاغ البائع بأن هناك مشتريًا مهتمًا بالعرض."
+  );
 }
 
 
@@ -364,62 +425,53 @@ async function handleWebhook(body) {
 
     const query = body.callback_query;
 
+    await answerCallback(query.id);
+
     if (!query.message) {
-      await answerCallback(query.id);
       return;
     }
 
     const chatId = query.message.chat.id;
+    const data = query.data;
+
 
     // --------------------------------------------------
     // AGREE
     // --------------------------------------------------
 
-    if (query.data === "agree") {
+    if (data === "agree") {
 
-      await sendTelegram(
-        chatId,
-        "🛍️ أهلاً بك في السوق!\n\n" +
-        "اختر ما تريد:",
-        {
-          inline_keyboard: [
-            [
-              {
-                text: "🛒 أريد شراء",
-                callback_data: "buy"
-              }
-            ],
-            [
-              {
-                text: "📦 أريد بيع",
-                callback_data: "sell"
-              }
-            ],
-            [
-              {
-                text: "💬 التفاوض وإتمام الصفقة",
-                callback_data: "negotiate"
-              }
-            ],
-            [
-              {
-                text: "👤 حسابي",
-                callback_data: "account"
-              }
-            ]
-          ]
-        }
-      );
+      sessions[chatId] = {
+        step: "menu"
+      };
 
-      await answerCallback(query.id);
+      await showMainMenu(chatId);
+
       return;
     }
+
+
+    // --------------------------------------------------
+    // MENU
+    // --------------------------------------------------
+
+    if (data === "menu") {
+
+      sessions[chatId] = {
+        step: "menu"
+      };
+
+      await showMainMenu(chatId);
+
+      return;
+    }
+
 
     // --------------------------------------------------
     // BUY
     // --------------------------------------------------
 
-    if (query.data === "buy") {
+    if (data === "buy") {
 
       sessions[chatId] = {
         step: "buy_product"
@@ -432,15 +484,15 @@ async function handleWebhook(body) {
         "مثال: iPhone 14"
       );
 
-      await answerCallback(query.id);
       return;
     }
+
 
     // --------------------------------------------------
     // SELL
     // --------------------------------------------------
 
-    if (query.data === "sell") {
+    if (data === "sell") {
 
       sessions[chatId] = {
         step: "sell_product"
@@ -452,43 +504,84 @@ async function handleWebhook(body) {
         "أرسل اسم المنتج الذي تريد عرضه للبيع."
       );
 
-      await answerCallback(query.id);
       return;
     }
+
 
     // --------------------------------------------------
     // NEGOTIATE
     // --------------------------------------------------
 
-    if (query.data === "negotiate") {
+    if (data === "negotiate") {
 
       await sendTelegram(
         chatId,
         "💬 التفاوض وإتمام الصفقة\n\n" +
-        "هذه الخدمة سيتم ربطها بالإعلان المختار بعد تجهيز مراحل الشراء والبيع."
+        "هذه الخدمة سيتم تجهيزها وربطها بالعرض والمشتري في المرحلة التالية."
       );
 
-      await answerCallback(query.id);
       return;
     }
+
 
     // --------------------------------------------------
     // ACCOUNT
     // --------------------------------------------------
 
-    if (query.data === "account") {
+    if (data === "account") {
+
+      const myListings =
+        listings.filter(
+          (item) =>
+            item.sellerChatId === chatId &&
+            item.status === "active"
+        );
 
       await sendTelegram(
         chatId,
         "👤 حسابي\n\n" +
-        "سيتم تجهيز حساب المستخدم في المرحلة التالية."
+        `📦 عدد عروضك الحالية: ${myListings.length}\n\n` +
+        "سيتم تطوير قسم الحساب وإدارة العروض في المرحلة التالية."
       );
 
-      await answerCallback(query.id);
       return;
     }
 
-    await answerCallback(query.id);
+
+    // --------------------------------------------------
+    // CONTACT SELLER
+    // --------------------------------------------------
+
+    if (data.startsWith("contact_")) {
+
+      const idText =
+        data.replace("contact_", "");
+
+      const listingId =
+        Number(idText);
+
+      if (
+        Number.isInteger(listingId) &&
+        listingId > 0
+      ) {
+
+        await contactSeller(
+          chatId,
+          listingId
+        );
+
+      } else {
+
+        await sendTelegram(
+          chatId,
+          "❌ رقم العرض غير صحيح."
+        );
+      }
+
+      return;
+    }
+
+
     return;
   }
 
@@ -501,8 +594,12 @@ async function handleWebhook(body) {
     return;
   }
 
-  const chatId = body.message.chat.id;
-  const text = (body.message.text || "").trim();
+
+  const chatId =
+    body.message.chat.id;
+
+  const text =
+    (body.message.text || "").trim();
 
 
   // ====================================================
@@ -540,6 +637,43 @@ async function handleWebhook(body) {
 
 
   // ====================================================
+  // CANCEL
+  // ====================================================
+
+  if (text === "/cancel") {
+
+    sessions[chatId] = {
+      step: "menu"
+    };
+
+    await sendTelegram(
+      chatId,
+      "❌ تم إلغاء العملية."
+    );
+
+    await showMainMenu(chatId);
+
+    return;
+  }
+
+
+  // ====================================================
+  // MENU
+  // ====================================================
+
+  if (text === "/menu") {
+
+    sessions[chatId] = {
+      step: "menu"
+    };
+
+    await showMainMenu(chatId);
+
+    return;
+  }
+
+
+  // ====================================================
   // BUY - PRODUCT
   // ====================================================
 
@@ -557,8 +691,12 @@ async function handleWebhook(body) {
       return;
     }
 
+
     sessions[chatId].product = text;
-    sessions[chatId].step = "buy_max_price";
+
+    sessions[chatId].step =
+      "buy_max_price";
+
 
     await sendTelegram(
       chatId,
@@ -581,7 +719,9 @@ async function handleWebhook(body) {
     sessions[chatId]?.step === "buy_max_price"
   ) {
 
-    const price = parsePrice(text);
+    const price =
+      parsePrice(text);
+
 
     if (!price) {
 
@@ -595,8 +735,13 @@ async function handleWebhook(body) {
       return;
     }
 
-    sessions[chatId].maxPrice = price;
-    sessions[chatId].step = "buy_region";
+
+    sessions[chatId].maxPrice =
+      price;
+
+    sessions[chatId].step =
+      "buy_region";
+
 
     await sendTelegram(
       chatId,
@@ -604,7 +749,8 @@ async function handleWebhook(body) {
       formatPrice(price) +
       "\n\n" +
       "📍 أرسل المنطقة أو المدينة التي تريد البحث فيها.\n\n" +
-      "مثال: Київ"
+      "مثال: Київ\n\n" +
+      "أو اكتب: الكل"
     );
 
     return;
@@ -629,51 +775,68 @@ async function handleWebhook(body) {
       return;
     }
 
-    sessions[chatId].region = text;
-    sessions[chatId].step = "buy_searching";
 
-    const session = sessions[chatId];
+    sessions[chatId].region =
+      text;
+
+    sessions[chatId].step =
+      "buy_searching";
+
+
+    const session =
+      sessions[chatId];
+
 
     await sendTelegram(
       chatId,
-      "🔎 بدأ البحث الحقيقي في OLX.ua...\n\n" +
+      "🔎 أبحث الآن في عروض سوقنا...\n\n" +
       `🛒 المنتج: ${session.product}\n` +
       `💰 أقصى سعر: ${formatPrice(session.maxPrice)}\n` +
       `📍 المنطقة: ${session.region}\n\n` +
-      "⏳ انتظر قليلًا..."
+      "⏳ لحظة من فضلك..."
     );
+
 
     try {
 
-      const results = await searchOLX(
-        session.product,
-        session.maxPrice,
-        session.region
-      );
+      const results =
+        searchListings(
+          session.product,
+          session.maxPrice,
+          session.region
+        );
 
-      await sendOLXResults(
+
+      await sendMarketplaceResults(
         chatId,
         session,
         results
       );
 
-      sessions[chatId].step = "buy_results";
+
+      sessions[chatId].step =
+        "buy_results";
+
 
     } catch (error) {
 
       console.error(
-        "OLX search error:",
+        "Marketplace search error:",
         error
       );
 
+
       await sendTelegram(
         chatId,
-        "❌ حدث خطأ أثناء البحث في OLX.ua.\n\n" +
-        "تأكد من إعداد APIFY_API_TOKEN في Render ثم حاول مرة أخرى."
+        "❌ حدث خطأ أثناء البحث في سوقنا.\n\n" +
+        "حاول مرة أخرى."
       );
 
-      sessions[chatId].step = "buy_region";
+
+      sessions[chatId].step =
+        "buy_region";
     }
+
 
     return;
   }
@@ -697,8 +860,13 @@ async function handleWebhook(body) {
       return;
     }
 
-    sessions[chatId].product = text;
-    sessions[chatId].step = "sell_description";
+
+    sessions[chatId].product =
+      text;
+
+    sessions[chatId].step =
+      "sell_description";
+
 
     await sendTelegram(
       chatId,
@@ -731,8 +899,13 @@ async function handleWebhook(body) {
       return;
     }
 
-    sessions[chatId].description = text;
-    sessions[chatId].step = "sell_price";
+
+    sessions[chatId].description =
+      text;
+
+    sessions[chatId].step =
+      "sell_price";
+
 
     await sendTelegram(
       chatId,
@@ -752,7 +925,9 @@ async function handleWebhook(body) {
     sessions[chatId]?.step === "sell_price"
   ) {
 
-    const price = parsePrice(text);
+    const price =
+      parsePrice(text);
+
 
     if (!price) {
 
@@ -766,8 +941,13 @@ async function handleWebhook(body) {
       return;
     }
 
-    sessions[chatId].price = price;
-    sessions[chatId].step = "sell_region";
+
+    sessions[chatId].price =
+      price;
+
+    sessions[chatId].step =
+      "sell_region";
+
 
     await sendTelegram(
       chatId,
@@ -800,28 +980,65 @@ async function handleWebhook(body) {
       return;
     }
 
-    sessions[chatId].region = text;
-    sessions[chatId].step = "sell_summary";
 
-    const session = sessions[chatId];
+    sessions[chatId].region =
+      text;
+
+
+    const session =
+      sessions[chatId];
+
+
+    // إنشاء العرض داخل سوقنا
+    const listing =
+      createListing(
+        chatId,
+        session
+      );
+
 
     await sendTelegram(
       chatId,
-      "✅ تم تسجيل عرض البيع.\n\n" +
-      "📦 المنتج: " +
-      session.product +
-      "\n\n" +
-      "📝 الوصف والحالة:\n" +
-      session.description +
-      "\n\n" +
-      "💰 السعر: " +
-      formatPrice(session.price) +
-      "\n" +
-      "📍 المنطقة: " +
-      session.region +
-      "\n\n" +
-      "📋 بيانات العرض مكتملة.\n\n" +
-      "الخطوة التالية ستكون تجهيز نشر العرض واستقبال المشترين."
+      "✅ تم نشر عرضك في سوق تيليجرام!\n\n" +
+      `🆔 رقم العرض: #${listing.id}\n\n` +
+      `📦 المنتج: ${listing.product}\n\n` +
+      `📝 الوصف والحالة:\n${listing.description}\n\n` +
+      `💰 السعر: ${formatPrice(listing.price)}\n` +
+      `📍 المنطقة: ${listing.region}\n\n` +
+      "🔎 أصبح العرض متاحًا للمشترين الذين يبحثون عن هذا المنتج."
+    );
+
+
+    sessions[chatId] = {
+      step: "menu"
+    };
+
+
+    await sendTelegram(
+      chatId,
+      "ماذا تريد أن تفعل الآن؟",
+      {
+        inline_keyboard: [
+          [
+            {
+              text: "📦 إضافة عرض آخر",
+              callback_data: "sell"
+            }
+          ],
+          [
+            {
+              text: "🛒 البحث عن منتج",
+              callback_data: "buy"
+            }
+          ],
+          [
+            {
+              text: "🏠 القائمة الرئيسية",
+              callback_data: "menu"
+            }
+          ]
+        ]
+      }
     );
 
     return;
@@ -843,65 +1060,57 @@ async function handleWebhook(body) {
 // HTTP SERVER
 // ======================================================
 
-const server = http.createServer((req, res) => {
+const server =
+  http.createServer((req, res) => {
 
-  // ====================================================
-  // HOME
-  // ====================================================
+    // ==================================================
+    // HOME
+    // ==================================================
 
-  if (
-    req.method === "GET" &&
-    req.url === "/"
-  ) {
+    if (
+      req.method === "GET" &&
+      req.url === "/"
+    ) {
 
-    res.writeHead(200, {
+      res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8"
-    });
+});
 
-    res.end(`
-      <!DOCTYPE html>
-      <html lang="uk">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Telegram Marketplace</title>
-      </head>
-      <body>
-        <h1>Telegram Marketplace</h1>
-        <p>Сервіс працює.</p>
-      </body>
-      </html>
-    `);
+res.end(`
+  <!DOCTYPE html>
+  <html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    >
+    <title>Telegram Marketplace</title>
+  </head>
 
-    return;
+  <body>
+    <h1>🛍️ Telegram Marketplace</h1>
+    <p>الخدمة تعمل بنجاح.</p>
+  </body>
+  </html>
+`);
+return;
   }
-
-
-  // ====================================================
-  // WEBHOOK
-  // ====================================================
 
   if (
     req.method === "POST" &&
     req.url === "/webhook"
-  ) {
 
+  ) {
     let data = "";
 
-    req.on("data", chunk => {
+    req.on("data", (chunk) => {
       data += chunk;
     });
 
     req.on("end", () => {
-
       try {
-
         const body = JSON.parse(data);
-
-        /*
-         * Respond to Telegram immediately.
-         * The OLX search can take some time.
-         */
 
         res.writeHead(200, {
           "Content-Type": "text/plain"
@@ -909,7 +1118,7 @@ const server = http.createServer((req, res) => {
 
         res.end("OK");
 
-        handleWebhook(body).catch(error => {
+        handleWebhook(body).catch((error) => {
           console.error(
             "Webhook processing error:",
             error
@@ -917,7 +1126,6 @@ const server = http.createServer((req, res) => {
         });
 
       } catch (error) {
-
         console.error(
           "Webhook JSON error:",
           error
@@ -934,28 +1142,22 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-
-  // ====================================================
-  // NOT FOUND
-  // ====================================================
-
   res.writeHead(404);
   res.end("Not Found");
 });
 
-
-// ======================================================
-// START SERVER
-// ======================================================
+if (!TELEGRAM_TOKEN) {
+  console.error(
+    "TELEGRAM_BOT_TOKEN is not configured"
+  );
+}
 
 server.listen(
   PORT,
   "0.0.0.0",
   () => {
-
     console.log(
       `Telegram Marketplace server running on port ${PORT}`
     );
-
   }
 );
