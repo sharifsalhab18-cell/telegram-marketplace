@@ -3,6 +3,8 @@ const http = require("http");
 const PORT = process.env.PORT || 5000;
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
+const sessions = {};
+
 async function sendTelegram(chatId, text, replyMarkup = null) {
   const body = {
     chat_id: chatId,
@@ -41,50 +43,102 @@ async function answerCallback(callbackId) {
 }
 
 async function handleWebhook(body) {
+
+  // =========================
+  // CALLBACK BUTTONS
+  // =========================
+
   if (body.callback_query) {
     const query = body.callback_query;
     const chatId = query.message.chat.id;
 
-    if (query.data === "agree") {
-  await sendTelegram(
-    chatId,
-    "🛍️ أهلاً بك في السوق!\n\n" +
-    "اختر ما تريد:",
-    {
-      inline_keyboard: [
-        [
-          {
-            text: "🛒 أريد شراء",
-            callback_data: "buy"
-          }
-        ],
-        [
-          {
-            text: "📦 أريد بيع",
-            callback_data: "sell"
-          }
-        ],
-        [
-          {
-            text: "💬 التفاوض وإتمام الصفقة",
-            callback_data: "negotiate"
-          }
-        ],
-        [
-          {
-            text: "👤 حسابي",
-            callback_data: "account"
-          }
-        ]
-      ]
-    }
-  );
+    // =========================
+    // AGREE
+    // =========================
 
-  await answerCallback(query.id);
-}
+    if (query.data === "agree") {
+      await sendTelegram(
+        chatId,
+        "🛍️ أهلاً بك في السوق!\n\n" +
+        "اختر ما تريد:",
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "🛒 أريد شراء",
+                callback_data: "buy"
+              }
+            ],
+            [
+              {
+                text: "📦 أريد بيع",
+                callback_data: "sell"
+              }
+            ],
+            [
+              {
+                text: "💬 التفاوض وإتمام الصفقة",
+                callback_data: "negotiate"
+              }
+            ],
+            [
+              {
+                text: "👤 حسابي",
+                callback_data: "account"
+              }
+            ]
+          ]
+        }
+      );
+
+      await answerCallback(query.id);
+      return;
+    }
+
+    // =========================
+    // BUY
+    // =========================
+
+    if (query.data === "buy") {
+      sessions[chatId] = {
+        step: "buy_product"
+      };
+
+      await sendTelegram(
+        chatId,
+        "🛒 شراء منتج\n\n" +
+        "أرسل اسم المنتج الذي تبحث عنه."
+      );
+
+      await answerCallback(query.id);
+      return;
+    }
+
+    // =========================
+    // SELL
+    // =========================
+
+    if (query.data === "sell") {
+      sessions[chatId] = {
+        step: "sell_product"
+      };
+
+      await sendTelegram(
+        chatId,
+        "📦 بيع منتج\n\n" +
+        "أرسل اسم المنتج الذي تريد عرضه للبيع."
+      );
+
+      await answerCallback(query.id);
+      return;
+    }
 
     return;
   }
+
+  // =========================
+  // MESSAGES
+  // =========================
 
   if (!body.message) {
     return;
@@ -92,6 +146,50 @@ async function handleWebhook(body) {
 
   const chatId = body.message.chat.id;
   const text = body.message.text || "";
+
+  // =========================
+  // BUY PRODUCT
+  // =========================
+
+  if (sessions[chatId]?.step === "buy_product") {
+    sessions[chatId].product = text;
+    sessions[chatId].step = "buy_details";
+
+    await sendTelegram(
+      chatId,
+      "🔎 ممتاز.\n\n" +
+      "المنتج المطلوب:\n" +
+      text +
+      "\n\n" +
+      "سنكمل الآن تفاصيل الشراء."
+    );
+
+    return;
+  }
+
+  // =========================
+  // SELL PRODUCT
+  // =========================
+
+  if (sessions[chatId]?.step === "sell_product") {
+    sessions[chatId].product = text;
+    sessions[chatId].step = "sell_details";
+
+    await sendTelegram(
+      chatId,
+      "📦 ممتاز.\n\n" +
+      "المنتج المعروض للبيع:\n" +
+      text +
+      "\n\n" +
+      "سنكمل الآن تفاصيل العرض."
+    );
+
+    return;
+  }
+
+  // =========================
+  // START
+  // =========================
 
   if (text === "/start") {
     await sendTelegram(
@@ -113,10 +211,22 @@ async function handleWebhook(body) {
         ]
       }
     );
+
+    return;
   }
 }
 
+
+// =========================
+// HTTP SERVER
+// =========================
+
 const server = http.createServer(async (req, res) => {
+
+  // =========================
+  // HOME
+  // =========================
+
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8"
@@ -140,6 +250,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // =========================
+  // WEBHOOK
+  // =========================
+
   if (req.method === "POST" && req.url === "/webhook") {
     let data = "";
 
@@ -156,13 +270,16 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, {
           "Content-Type": "text/plain"
         });
+
         res.end("OK");
+
       } catch (error) {
         console.error("Webhook error:", error);
 
         res.writeHead(500, {
           "Content-Type": "text/plain"
         });
+
         res.end("Error");
       }
     });
@@ -170,10 +287,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // =========================
+  // NOT FOUND
+  // =========================
+
   res.writeHead(404);
   res.end("Not Found");
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Telegram Marketplace server running on port ${PORT}`);
+  console.log(
+    `Telegram Marketplace server running on port ${PORT}`
+  );
 });
