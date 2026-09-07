@@ -2,9 +2,9 @@
   "name": "telegram-marketplace",
   "version": "1.0.0",
   "description": "Private Telegram marketplace for buying and selling",
-  "main": "netlify/functions/telegram-webhook.js",
+  "main": "worker.js",
   "scripts": {
-    "start": "node netlify/functions/telegram-webhook.js"
+    "start": "wrangler dev --local --ip 0.0.0.0 --port ${PORT:-5000}"
   },
   "dependencies": {}
 }
