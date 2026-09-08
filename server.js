@@ -362,7 +362,7 @@ const TEXT = {
       "🔒 User privacy is protected.\n\n" +
       "💰 Platform commission: 5%\n" +
       "2.5% buyer + 2.5% seller\n\n" +
-      "To enter the marketplace, press the button
+      "To enter the marketplace, press the button below.",
 
 // ============================================================
 // LISTING / BUY REQUEST / NEGOTIATION HELPERS
