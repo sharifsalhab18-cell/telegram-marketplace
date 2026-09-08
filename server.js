@@ -1,13 +1,23 @@
+// ============================================================
+// TELEGRAM MARKETPLACE
+// المرحلة 1 من 3
+// ============================================================
+
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
 const PORT = process.env.PORT || 5000;
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "";
 
 const sessions = {};
+
 const DB_FILE = path.join(__dirname, "marketplace-data.json");
+
+// ============================================================
+// DATABASE
+// ============================================================
 
 const DEFAULT_DB = {
   users: {},
@@ -16,46 +26,91 @@ const DEFAULT_DB = {
   negotiations: [],
   deals: [],
   activities: [],
+
   counters: {
     listing: 1,
-    request: 1,
+    buyRequest: 1,
     negotiation: 1,
-    deal: 1
+    deal: 1,
+    activity: 1
   }
 };
 
+let db = loadDb();
+
 function loadDb() {
   try {
-    if (fs.existsSync(DB_FILE)) {
-      const parsed = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-      return {
-        ...DEFAULT_DB,
-        ...parsed,
-        counters: {
-          ...DEFAULT_DB.counters,
-          ...(parsed.counters || {})
-        }
-      };
+    if (!fs.existsSync(DB_FILE)) {
+      fs.writeFileSync(
+        DB_FILE,
+        JSON.stringify(DEFAULT_DB, null, 2),
+        "utf8"
+      );
+      return JSON.parse(JSON.stringify(DEFAULT_DB));
     }
+
+    const raw = fs.readFileSync(DB_FILE, "utf8");
+
+    if (!raw.trim()) {
+      return JSON.parse(JSON.stringify(DEFAULT_DB));
+    }
+
+    const saved = JSON.parse(raw);
+
+    return {
+      ...DEFAULT_DB,
+      ...saved,
+
+      users: saved.users || {},
+      listings: Array.isArray(saved.listings)
+        ? saved.listings
+        : [],
+      buyRequests: Array.isArray(saved.buyRequests)
+        ? saved.buyRequests
+        : [],
+      negotiations: Array.isArray(saved.negotiations)
+        ? saved.negotiations
+        : [],
+      deals: Array.isArray(saved.deals)
+        ? saved.deals
+        : [],
+      activities: Array.isArray(saved.activities)
+        ? saved.activities
+        : [],
+
+      counters: {
+        ...DEFAULT_DB.counters,
+        ...(saved.counters || {})
+      }
+    };
   } catch (error) {
     console.error("Database load error:", error);
-  }
-  return structuredClone(DEFAULT_DB);
-}
 
-const db = loadDb();
+    return JSON.parse(JSON.stringify(DEFAULT_DB));
+  }
+}
 
 function saveDb() {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
+    fs.writeFileSync(
+      DB_FILE,
+      JSON.stringify(db, null, 2),
+      "utf8"
+    );
   } catch (error) {
     console.error("Database save error:", error);
   }
 }
 
+// ============================================================
+// TRANSLATIONS
+// ============================================================
+
 const TEXT = {
   ar: {
-    lang: "🌐 اختر لغة السوق:",
+    lang:
+      "🌐 اختر اللغة / Choose language / Оберіть мову",
+
     welcome:
       "🛍️ مرحباً بك في سوق تيليجرام\n\n" +
       "سوق خاص للبيع والشراء والتفاوض وإتمام الصفقات.\n\n" +
@@ -63,242 +118,398 @@ const TEXT = {
       "💰 عمولة المنصة: 5%\n" +
       "2.5% على المشتري + 2.5% على البائع\n\n" +
       "للدخول إلى السوق اضغط على الزر أدناه.",
+
     agree: "✅ أوافق وأدخل السوق",
-    menuTitle: "🛍️ أهلاً بك في سوق تيليجرام!\n\nاختر ما تريد:",
-    buy: "🛒 أريد شراء",
-    sell: "📦 أريد بيع",
-    browse: "👀 للتصفح فقط",
+
+    mainMenu: "🛍️ سوق تيليجرام\n\nاختر ما تريد:",
+
+    buy: "🛒 شراء",
+    sell: "📦 بيع",
+    browse: "🔎 تصفح السوق",
     account: "👤 حسابي",
-    chooseProduct: "🛒 أرسل اسم المنتج الذي تبحث عنه.\n\nمثال: iPhone 14",
-    chooseMax: "💰 أرسل أقصى سعر تريد دفعه للمنتج.\n\nمثال: 25000",
+
+    back: "🔙 رجوع",
+    cancel: "❌ إلغاء",
+
+    chooseProduct:
+      "🛒 ما المنتج الذي تبحث عنه؟\n\nأرسل اسم المنتج.",
+
+    chooseMaxPrice:
+      "💰 ما أقصى سعر تريد دفعه؟\n\nأرسل السعر بالأرقام.",
+
     chooseRegion:
-      "📍 أرسل المنطقة أو المدينة التي تريد البحث فيها.\n\nمثال: Київ\n\nأو اكتب: الكل",
-    searching: "🔎 أبحث الآن في عروض سوقنا...",
-    noResults: "🔎 انتهى البحث في سوقنا.\n\nلم نجد حاليًا عروضًا مطابقة لطلبك.",
-    buySaved:
-      "🛒 تم تسجيل طلبك في سوقنا.\n\n" +
-      "إذا لم يوجد عرض مناسب الآن، يبقى الطلب مسجلًا ويمكن متابعة السوق.",
-    sellProduct: "📦 أرسل اسم المنتج الذي تريد عرضه للبيع.",
-    sellDescription: "📝 أرسل وصف المنتج وحالته.",
-    sellPrice: "💰 أرسل السعر الذي تريد بيع المنتج به.\n\nمثال: 25000",
-    sellRegion: "📍 أرسل المنطقة أو المدينة التي يوجد فيها المنتج.\n\nمثال: Київ",
+      "📍 ما المنطقة المطلوبة؟\n\nأرسل اسم المدينة أو المنطقة، أو اكتب: الكل",
+
+    searchStarted:
+      "🔎 بدأ البحث في السوق...\n\nسأعرض لك الإعلانات المناسبة.",
+
+    noListings:
+      "📭 لا توجد إعلانات متاحة حالياً.",
+
+    browseTitle:
+      "🛍️ الإعلانات المتاحة حالياً:",
+
+    sellProduct:
+      "📦 ما المنتج الذي تريد بيعه؟\n\nأرسل اسم المنتج.",
+
+    sellPrice:
+      "💰 ما سعر البيع المطلوب؟\n\nأرسل السعر بالأرقام.",
+
+    sellRegion:
+      "📍 في أي منطقة يوجد المنتج؟\n\nأرسل اسم المدينة أو المنطقة.",
+
     photoRequired:
-      "📸 أرسل صورة واحدة على الأقل للمنتج.\nيمكنك إرسال عدة صور، ثم اضغط «تم».",
-    morePhotos: "📸 أرسل صورة أخرى أو اضغط «تم» عند الانتهاء.",
-    done: "✅ تم",
-    listingPublished: "✅ تم نشر عرضك في سوق تيليجرام!",
-    browseTitle: "👀 عروض سوق تيليجرام",
-    noListings: "لا توجد عروض نشطة حاليًا.",
-    contact: "💬 تواصل مع البائع",
-    contacted: "✅ تم إرسال اهتمامك بالعرض إلى البائع.",
-    sellerNotice: "📩 لديك مشتري مهتم بعرضك!",
-    negotiationStarted: "💬 بدأ التفاوض بين المشتري والبائع.",
-    negotiationText: "💬 أرسل رسالتك للتفاوض.\n\nاكتب /end لإنهاء التفاوض.",
-    dealOffer: "🤝 هل توافق على إتمام الصفقة بالسعر المتفق عليه؟",
-    dealCreated: "🤝 تم تسجيل الصفقة.",
-    accountText: "👤 حسابي\n\n",
-    cancel: "❌ تم إلغاء العملية.",
-    back: "🏠 القائمة الرئيسية",
-    error: "❌ حدث خطأ. حاول مرة أخرى.",
-    adminFallback: "لم يتم ضبط ADMIN_CHAT_ID بعد."
+      "📸 أرسل صورة واحدة على الأقل للمنتج.\n\nيمكنك إرسال عدة صور، وبعد الانتهاء اضغط «تم».",
+
+    done:
+      "✅ تم",
+
+    morePhotos:
+      "📸 يمكنك إرسال صورة أخرى أو الضغط على «تم».",
+
+    listingPublished:
+      "✅ تم نشر إعلانك بنجاح في السوق.",
+
+    error:
+      "❌ حدث خطأ. حاول مرة أخرى.",
+
+    invalidPrice:
+      "❌ السعر غير صحيح.\n\nأرسل رقماً صحيحاً.",
+
+    accountText:
+      "👤 حسابي\n\n",
+
+    dealOffer:
+      "هل توافق على هذا السعر لإتمام الصفقة؟",
+
+    dealCreated:
+      "🤝 تم إنشاء الصفقة بنجاح.",
+
+    offerSent:
+      "📨 تم إرسال عرض السعر للطرف الآخر.",
+
+    offerPrice:
+      "💰 أرسل السعر الذي تقترحه لإتمام الصفقة.",
+
+    negotiationStarted:
+      "💬 بدأ التفاوض.\n\nأرسل رسالتك للطرف الآخر.",
+
+    negotiationUnavailable:
+      "❌ التفاوض غير متاح حالياً.",
+
+    messageFromOther:
+      "💬 رسالة من الطرف الآخر:\n\n",
+
+    commissionInfo:
+      "💰 عمولة المنصة: 5%\n" +
+      "2.5% على المشتري + 2.5% على البائع",
+
+    listingPrice:
+      "💰 السعر:",
+
+    listingRegion:
+      "📍 المنطقة:",
+
+    seller:
+      "👤 البائع:",
+
+    contactSeller:
+      "💬 تفاوض مع البائع",
+
+    makeOffer:
+      "💰 تقديم عرض سعر",
+
+    accountListings:
+      "📦 إعلاناتي",
+
+    accountRequests:
+      "🛒 طلبات الشراء",
+
+    accountDeals:
+      "🤝 صفقاتي",
+
+    emptyAccount:
+      "لا توجد بيانات حتى الآن."
   },
+
   uk: {
-    lang: "🌐 Оберіть мову ринку:",
+    lang:
+      "🌐 اختر اللغة / Choose language / Оберіть мову",
+
     welcome:
-      "🛍️ Вітаємо на Telegram Marketplace\n\n" +
-      "Приватний майданчик для купівлі, продажу, переговорів та завершення угод.\n\n" +
+      "🛍️ Вітаємо на ринку Telegram\n\n" +
+      "Приватний ринок для продажу, купівлі, переговорів та укладання угод.\n\n" +
       "🔒 Конфіденційність користувачів збережена.\n\n" +
       "💰 Комісія платформи: 5%\n" +
-      "2.5% покупець + 2.5% продавець\n\n" +
-      "Натисніть кнопку нижче, щоб увійти.",
-    agree: "✅ Погоджуюсь та входжу",
-    menuTitle: "🛍️ Вітаємо на Telegram Marketplace!\n\nОберіть дію:",
-    buy: "🛒 Хочу купити",
-    sell: "📦 Хочу продати",
-    browse: "👀 Лише перегляд",
-    account: "👤 Мій профіль",
-    chooseProduct: "🛒 Надішліть назву товару.\n\nНаприклад: iPhone 14",
-    chooseMax: "💰 Надішліть максимальну ціну.\n\nНаприклад: 25000",
-    chooseRegion: "📍 Надішліть місто або область.\n\nНаприклад: Київ\n\nАбо напишіть: будь-яка",
-    searching: "🔎 Шукаю пропозиції на нашому ринку...",
-    noResults: "🔎 Пошук завершено.\n\nПідходящих пропозицій зараз немає.",
-    buySaved: "🛒 Ваш запит на купівлю збережено.",
-    sellProduct: "📦 Надішліть назву товару.",
-    sellDescription: "📝 Надішліть опис і стан товару.",
-    sellPrice: "💰 Надішліть ціну продажу.\n\nНаприклад: 25000",
-    sellRegion: "📍 Надішліть місто або область товару.\n\nНаприклад: Київ",
-    photoRequired: "📸 Надішліть щонайменше одне фото товару.\nПісля кількох фото натисніть «Готово».",
-    morePhotos: "📸 Надішліть ще фото або натисніть «Готово».",
-    done: "✅ Готово",
-    listingPublished: "✅ Вашу пропозицію опубліковано!",
-    browseTitle: "👀 Пропозиції Telegram Marketplace",
-    noListings: "Активних пропозицій зараз немає.",
-    contact: "💬 Зв'язатися з продавцем",
-    contacted: "✅ Інтерес до пропозиції надіслано продавцю.",
-    sellerNotice: "📩 Є покупець, зацікавлений у вашій пропозиції!",
-    negotiationStarted: "💬 Переговори між покупцем і продавцем розпочато.",
-    negotiationText: "💬 Надсилайте повідомлення для переговорів.\n\n/end — завершити.",
-    dealOffer: "🤝 Погоджуєтесь завершити угоду за узгодженою ціною?",
-    dealCreated: "🤝 Угоду зареєстровано.",
-    accountText: "👤 Мій профіль\n\n",
-    cancel: "❌ Операцію скасовано.",
-    back: "🏠 Головне меню",
-    error: "❌ Сталася помилка. Спробуйте ще раз.",
-    adminFallback: "ADMIN_CHAT_ID не налаштовано."
+      "2.5% з покупця + 2.5% з продавця\n\n" +
+      "Щоб увійти на ринок, натисніть кнопку нижче.",
+
+    agree: "✅ Погоджуюсь і входжу",
+
+    mainMenu: "🛍️ Ринок Telegram\n\nОберіть дію:",
+
+    buy: "🛒 Купити",
+    sell: "📦 Продати",
+    browse: "🔎 Переглянути ринок",
+    account: "👤 Мій акаунт",
+
+    back: "🔙 Назад",
+    cancel: "❌ Скасувати",
+
+    chooseProduct:
+      "🛒 Який товар ви шукаєте?\n\nНадішліть назву товару.",
+
+    chooseMaxPrice:
+      "💰 Яка максимальна ціна?\n\nНадішліть ціну цифрами.",
+
+    chooseRegion:
+      "📍 Який регіон потрібен?\n\nНадішліть місто або область або напишіть: будь-яка",
+
+    searchStarted:
+      "🔎 Пошук розпочато...\n\nПоказую відповідні оголошення.",
+
+    noListings:
+      "📭 Наразі немає доступних оголошень.",
+
+    browseTitle:
+      "🛍️ Доступні оголошення:",
+
+    sellProduct:
+      "📦 Який товар ви хочете продати?\n\nНадішліть назву товару.",
+
+    sellPrice:
+      "💰 Яка бажана ціна продажу?\n\nНадішліть ціну цифрами.",
+
+    sellRegion:
+      "📍 У якому регіоні знаходиться товар?\n\nНадішліть місто або область.",
+
+    photoRequired:
+      "📸 Надішліть хоча б одну фотографію товару.\n\nПісля завершення натисніть «Готово».",
+
+    done:
+      "✅ Готово",
+
+    morePhotos:
+      "📸 Можете надіслати ще фото або натиснути «Готово».",
+
+    listingPublished:
+      "✅ Ваше оголошення успішно опубліковано.",
+
+    error:
+      "❌ Сталася помилка. Спробуйте ще раз.",
+
+    invalidPrice:
+      "❌ Неправильна ціна.\n\nНадішліть число.",
+
+    accountText:
+      "👤 Мій акаунт\n\n",
+
+    dealOffer:
+      "Погоджуєтесь із цією ціною для укладання угоди?",
+
+    dealCreated:
+      "🤝 Угоду успішно створено.",
+
+    offerSent:
+      "📨 Пропозицію ціни надіслано іншій стороні.",
+
+    offerPrice:
+      "💰 Надішліть ціну, яку пропонуєте.",
+
+    negotiationStarted:
+      "💬 Переговори розпочато.\n\nНадішліть повідомлення іншій стороні.",
+
+    negotiationUnavailable:
+      "❌ Переговори зараз недоступні.",
+
+    messageFromOther:
+      "💬 Повідомлення від іншої сторони:\n\n",
+
+    commissionInfo:
+      "💰 Комісія платформи: 5%\n" +
+      "2.5% з покупця + 2.5% з продавця",
+
+    listingPrice:
+      "💰 Ціна:",
+
+    listingRegion:
+      "📍 Регіон:",
+
+    seller:
+      "👤 Продавець:",
+
+    contactSeller:
+      "💬 Переговори з продавцем",
+
+    makeOffer:
+      "💰 Запропонувати ціну",
+
+    accountListings:
+      "📦 Мої оголошення",
+
+    accountRequests:
+      "🛒 Мої запити",
+
+    accountDeals:
+      "🤝 Мої угоди",
+
+    emptyAccount:
+      "Поки що немає даних."
   },
+
   en: {
-    lang: "🌐 Choose your marketplace language:",
+    lang:
+      "🌐 اختر اللغة / Choose language / Оберіть мову",
+
     welcome:
       "🛍️ Welcome to Telegram Marketplace\n\n" +
-      "A private marketplace for buying, selling, negotiation and completing deals.\n\n" +
+      "A private marketplace for buying, selling, negotiating and completing deals.\n\n" +
       "🔒 User privacy is protected.\n\n" +
       "💰 Platform commission: 5%\n" +
       "2.5% buyer + 2.5% seller\n\n" +
-      "Press the button below to enter the marketplace.",
-    agree: "✅ Agree & enter",
-    menuTitle: "🛍️ Welcome to Telegram Marketplace!\n\nChoose an option:",
-    buy: "🛒 I want to buy",
-    sell: "📦 I want to sell",
-    browse: "👀 Browse only",
-    account: "👤 My account",
-    chooseProduct: "🛒 Send the product name.\n\nExample: iPhone 14",
-    chooseMax: "💰 Send the maximum price.\n\nExample: 25000",
-    chooseRegion: "📍 Send the city or region.\n\nExample: Kyiv\n\nOr type: any",
-    searching: "🔎 Searching our marketplace...",
-    noResults: "🔎 Search finished.\n\nNo matching offers were found.",
-    buySaved: "🛒 Your purchase request has been saved.",
-    sellProduct: "📦 Send the product name.",
-    sellDescription: "📝 Send the product description and condition.",
-    sellPrice: "💰 Send your selling price.\n\nExample: 25000",
-    sellRegion: "📍 Send the city or region where the product is located.\n\nExample: Kyiv",
-    photoRequired: "📸 Send at least one product photo.\nAfter sending photos, press “Done”.",
-    morePhotos: "📸 Send another photo or press “Done”.",
-    done: "✅ Done",
-    listingPublished: "✅ Your listing has been published!",
-    browseTitle: "👀 Telegram Marketplace offers",
-    noListings: "There are no active offers right now.",
-    contact: "💬 Contact seller",
-    contacted: "✅ Your interest was sent to the seller.",
-    sellerNotice: "📩 A buyer is interested in your listing!",
-    negotiationStarted: "💬 Negotiation between buyer and seller has started.",
-    negotiationText: "💬 Send your negotiation messages.\n\nUse /end to finish.",
-    dealOffer: "🤝 Do you agree to complete the deal at the agreed price?",
-    dealCreated: "🤝 Deal registered.",
-    accountText: "👤 My account\n\n",
-    cancel: "❌ Operation cancelled.",
-    back: "🏠 Main menu",
-    error: "❌ Something went wrong. Try again.",
-    adminFallback: "ADMIN_CHAT_ID is not configured."
-  }
-};
+      "To enter the marketplace, press the button
+// ============================================================
+// TELEGRAM MARKETPLACE
+// المرحلة 2 من 3
+// ============================================================
 
-function t(chatId, key) {
-  const lang = db.users[chatId]?.language || "ar";
-  return TEXT[lang]?.[key] || TEXT.ar[key] || key;
-}
+// ============================================================
+// LISTING / BUY REQUEST / NEGOTIATION HELPERS
+// ============================================================
 
-function setUser(chatId, data = {}) {
-  if (!db.users[chatId]) {
-    db.users[chatId] = {
-      chatId: String(chatId),
-      language: null,
-      firstSeenAt: new Date().toISOString(),
-      lastSeenAt: new Date().toISOString()
-    };
-  }
-  Object.assign(db.users[chatId], data, {
-    lastSeenAt: new Date().toISOString()
-  });
+function createListing(chatId, data) {
+  const id = db.counters.listing++;
+
+  const seller = db.users[String(chatId)] || {};
+
+  const listing = {
+    id,
+
+    sellerChatId: String(chatId),
+
+    sellerName: userDisplay(seller),
+
+    product: String(data.product || "").trim(),
+
+    price: Number(data.price),
+
+    region: String(data.region || "").trim(),
+
+    photos: Array.isArray(data.photos)
+      ? [...data.photos]
+      : [],
+
+    status: "active",
+
+    createdAt: now(),
+
+    updatedAt: now()
+  };
+
+  db.listings.push(listing);
+
   saveDb();
-  return db.users[chatId];
+
+  return listing;
 }
 
-function logActivity(chatId, type, extra = {}) {
-  db.activities.push({
-    id: db.activities.length + 1,
-    chatId: String(chatId),
-    type,
-    ...extra,
-    createdAt: new Date().toISOString()
-  });
-  if (db.activities.length > 10000) db.activities.shift();
+function createBuyRequest(chatId, data) {
+  const id = db.counters.buyRequest++;
+
+  const request = {
+    id,
+
+    buyerChatId: String(chatId),
+
+    product: String(data.product || "").trim(),
+
+    maxPrice: Number(data.maxPrice),
+
+    region: String(data.region || "").trim(),
+
+    status: "active",
+
+    createdAt: now(),
+
+    updatedAt: now()
+  };
+
+  db.buyRequests.push(request);
+
   saveDb();
+
+  return request;
 }
 
-async function sendTelegram(chatId, text, replyMarkup = null) {
-  if (!TELEGRAM_TOKEN) return;
-  const body = { chat_id: chatId, text };
-  if (replyMarkup) body.reply_markup = replyMarkup;
-
-  const response = await fetch(
-    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    }
-  );
-
-  if (!response.ok) {
-    console.error("Telegram sendMessage error:", await response.text());
-  }
-}
-
-async function sendPhoto(chatId, photoId, caption = "", replyMarkup = null) {
-  const body = { chat_id: chatId, photo: photoId };
-  if (caption) body.caption = caption;
-  if (replyMarkup) body.reply_markup = replyMarkup;
-
-  const response = await fetch(
-    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    }
-  );
-
-  if (!response.ok) {
-    console.error("Telegram sendPhoto error:", await response.text());
-  }
-}
-
-async function answerCallback(callbackId) {
-  if (!TELEGRAM_TOKEN) return;
-  await fetch(
-    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ callback_query_id: callbackId })
-    }
+function findListing(listingId) {
+  return db.listings.find(
+    listing =>
+      Number(listing.id) === Number(listingId)
   );
 }
 
-async function notifyAdmin(text) {
-  if (!ADMIN_CHAT_ID) return;
-  await sendTelegram(ADMIN_CHAT_ID, text);
-}
-
-function parsePrice(text) {
-  const n = Number(
-    String(text || "")
-      .replace(/\s/g, "")
-      .replace(/₴/g, "")
-      .replace(",", ".")
+function findNegotiation(negotiationId) {
+  return db.negotiations.find(
+    negotiation =>
+      Number(negotiation.id) === Number(negotiationId)
   );
-  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function formatPrice(price) {
-  if (price === null || price === undefined) return "—";
-  return `${Math.round(price).toLocaleString("uk-UA")} ₴`;
+function findActiveNegotiation(
+  buyerChatId,
+  sellerChatId,
+  listingId
+) {
+  return db.negotiations.find(
+    negotiation =>
+      negotiation.status === "active" &&
+      sameId(negotiation.buyerChatId, buyerChatId) &&
+      sameId(negotiation.sellerChatId, sellerChatId) &&
+      Number(negotiation.listingId) === Number(listingId)
+  );
 }
 
-function normalizeText(value) {
-  return String(value || "").trim().toLocaleLowerCase();
-}
-      if (!productMatch) return false;
+// ============================================================
+// SEARCH
+// ============================================================
+
+function searchListings(
+  product,
+  maxPrice = null,
+  region = ""
+) {
+  const wantedProduct =
+    normalizeText(product);
+
+  const wantedRegion =
+    normalizeText(region);
+
+  return db.listings
+    .filter(listing => {
+      if (listing.status !== "active") {
+        return false;
+      }
+
+      const listingProduct =
+        normalizeText(listing.product);
+
+      const listingRegion =
+        normalizeText(listing.region);
+
+      if (
+        wantedProduct &&
+        !listingProduct.includes(wantedProduct) &&
+        !wantedProduct.includes(listingProduct)
+      ) {
+        return false;
+      }
+
+      if (
+        maxPrice !== null &&
+        Number(listing.price) > Number(maxPrice)
+      ) {
+        return false;
+      }
 
       if (
         wantedRegion &&
@@ -307,396 +518,536 @@ function normalizeText(value) {
         wantedRegion !== "any" &&
         wantedRegion !== "будь-яка"
       ) {
-        if (!lr.includes(wantedRegion) && !wantedRegion.includes(lr)) {
+        if (
+          !listingRegion.includes(wantedRegion) &&
+          !wantedRegion.includes(listingRegion)
+        ) {
           return false;
         }
       }
 
       return true;
     })
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt) -
+        new Date(a.createdAt)
+    );
 }
 
-function createBuyRequest(chatId, data) {
-  const id = db.counters.request++;
+// ============================================================
+// NEGOTIATION
+// ============================================================
 
-  const request = {
-    id,
-    buyerChatId: String(chatId),
-    product: data.product,
-    maxPrice: data.maxPrice,
-    region: data.region,
-    status: "active",
-    createdAt: new Date().toISOString()
-  };
+function createNegotiation(
+  buyerChatId,
+  sellerChatId,
+  listingId
+) {
+  const existing =
+    findActiveNegotiation(
+      buyerChatId,
+      sellerChatId,
+      listingId
+    );
 
-  db.buyRequests.push(request);
-  saveDb();
+  if (existing) {
+    return existing;
+  }
 
-  logActivity(chatId, "buy_request_created", {
-    requestId: id,
-    product: data.product,
-    maxPrice: data.maxPrice,
-    region: data.region
-  });
-
-  return request;
-}
-
-function createListing(chatId, data) {
-  const id = db.counters.listing++;
-
-  const listing = {
-    id,
-    sellerChatId: String(chatId),
-    product: data.product,
-    description: data.description || "",
-    price: data.price,
-    region: data.region,
-    photos: Array.isArray(data.photos) ? data.photos : [],
-    status: "active",
-    createdAt: new Date().toISOString()
-  };
-
-  db.listings.push(listing);
-  saveDb();
-
-  return listing;
-}
-
-function getListing(id) {
-  return db.listings.find((item) => Number(item.id) === Number(id));
-}
-
-function createNegotiation(buyerChatId, sellerChatId, listingId) {
   const id = db.counters.negotiation++;
 
   const negotiation = {
     id,
-    buyerChatId: String(buyerChatId),
-    sellerChatId: String(sellerChatId),
+
     listingId: Number(listingId),
+
+    buyerChatId: String(buyerChatId),
+
+    sellerChatId: String(sellerChatId),
+
     status: "active",
+
     messages: [],
-    createdAt: new Date().toISOString()
+
+    offers: [],
+
+    createdAt: now(),
+
+    updatedAt: now()
   };
 
   db.negotiations.push(negotiation);
+
   saveDb();
 
   return negotiation;
 }
 
-function getNegotiation(id) {
-  return db.negotiations.find(
-    (item) => Number(item.id) === Number(id)
-  );
+function addNegotiationMessage(
+  negotiation,
+  fromChatId,
+  text
+) {
+  if (!Array.isArray(negotiation.messages)) {
+    negotiation.messages = [];
+  }
+
+  negotiation.messages.push({
+    fromChatId: String(fromChatId),
+
+    text: String(text),
+
+    createdAt: now()
+  });
+
+  negotiation.updatedAt = now();
+
+  saveDb();
 }
 
-function findActiveNegotiationForUser(chatId) {
-  return db.negotiations.find(
-    (item) =>
-      item.status === "active" &&
-      (String(item.buyerChatId) === String(chatId) ||
-        String(item.sellerChatId) === String(chatId))
-  );
+function addNegotiationOffer(
+  negotiation,
+  fromChatId,
+  price
+) {
+  if (!Array.isArray(negotiation.offers)) {
+    negotiation.offers = [];
+  }
+
+  const offer = {
+    fromChatId: String(fromChatId),
+
+    price: Number(price),
+
+    createdAt: now()
+  };
+
+  negotiation.offers.push(offer);
+
+  negotiation.updatedAt = now();
+
+  saveDb();
+
+  return offer;
 }
 
-function createDeal(negotiation, finalPrice) {
+// ============================================================
+// DEAL
+// ============================================================
+
+async function createDeal(
+  negotiation,
+  finalPrice
+) {
   const price = Number(finalPrice);
 
-  const buyerCommission = price * 0.025;
-  const sellerCommission = price * 0.025;
-  const totalCommission = buyerCommission + sellerCommission;
+  if (
+    !Number.isFinite(price) ||
+    price <= 0
+  ) {
+    return null;
+  }
+
+  const buyerCommission =
+    Math.round(price * 0.025 * 100) / 100;
+
+  const sellerCommission =
+    Math.round(price * 0.025 * 100) / 100;
+
+  const totalCommission =
+    Math.round(
+      (buyerCommission + sellerCommission) * 100
+    ) / 100;
 
   const id = db.counters.deal++;
 
   const deal = {
     id,
-    negotiationId: negotiation.id,
-    listingId: negotiation.listingId,
-    buyerChatId: String(negotiation.buyerChatId),
-    sellerChatId: String(negotiation.sellerChatId),
+
+    negotiationId: Number(negotiation.id),
+
+    listingId: Number(negotiation.listingId),
+
+    buyerChatId:
+      String(negotiation.buyerChatId),
+
+    sellerChatId:
+      String(negotiation.sellerChatId),
+
     price,
+
     buyerCommission,
+
     sellerCommission,
+
     totalCommission,
+
     status: "agreed",
-    createdAt: new Date().toISOString()
+
+    createdAt: now(),
+
+    updatedAt: now()
   };
 
   db.deals.push(deal);
+
   negotiation.status = "deal_created";
 
+  negotiation.finalPrice = price;
+
+  negotiation.updatedAt = now();
+
+  const listing =
+    findListing(negotiation.listingId);
+
+  if (listing) {
+    listing.status = "sold";
+    listing.updatedAt = now();
+  }
+
   saveDb();
+
+  logActivity(
+    negotiation.buyerChatId,
+    "deal_created",
+    {
+      dealId: deal.id,
+      negotiationId: negotiation.id
+    }
+  );
+
+  logActivity(
+    negotiation.sellerChatId,
+    "deal_created",
+    {
+      dealId: deal.id,
+      negotiationId: negotiation.id
+    }
+  );
+
+  const buyerText =
+    "🤝 تم الاتفاق على الصفقة.\n\n" +
+    `💰 السعر: ${formatPrice(price)}\n` +
+    `💰 عمولة المشتري 2.5%: ${formatPrice(buyerCommission)}\n\n` +
+    `${t(negotiation.buyerChatId, "commissionInfo")}`;
+
+  const sellerText =
+    "🤝 تم الاتفاق على الصفقة.\n\n" +
+    `💰 السعر: ${formatPrice(price)}\n` +
+    `💰 عمولة البائع 2.5%: ${formatPrice(sellerCommission)}\n\n` +
+    `${t(negotiation.sellerChatId, "commissionInfo")}`;
+
+  await sendTelegram(
+    negotiation.buyerChatId,
+    buyerText
+  );
+
+  await sendTelegram(
+    negotiation.sellerChatId,
+    sellerText
+  );
+
+  await notifyAdmin(
+    "🤝 صفقة جديدة\n\n" +
+    `🆔 الصفقة: #${deal.id}\n` +
+    `🆔 الإعلان: #${deal.listingId}\n` +
+    `💰 السعر: ${formatPrice(price)}\n` +
+    `💰 عمولة المشتري: ${formatPrice(buyerCommission)}\n` +
+    `💰 عمولة البائع: ${formatPrice(sellerCommission)}\n` +
+    `💰 إجمالي العمولة: ${formatPrice(totalCommission)}`
+  );
 
   return deal;
 }
 
-function userDisplay(user) {
-  if (!user) return "غير معروف";
+// ============================================================
+// FORWARD NEGOTIATION MESSAGE
+// ============================================================
 
-  const name = [
-    user.firstName || "",
-    user.lastName || ""
-  ].filter(Boolean).join(" ");
+async function forwardNegotiationMessage(
+  chatId,
+  text
+) {
+  const session =
+    sessions[String(chatId)];
 
-  if (user.username) {
-    return `${name || "User"} (@${user.username})`;
+  const negotiation =
+    findNegotiation(
+      session?.negotiationId
+    );
+
+  if (
+    !negotiation ||
+    negotiation.status !== "active"
+  ) {
+    return false;
   }
 
-  return name || `ID ${user.chatId}`;
+  const senderIsBuyer =
+    sameId(
+      negotiation.buyerChatId,
+      chatId
+    );
+
+  const senderIsSeller =
+    sameId(
+      negotiation.sellerChatId,
+      chatId
+    );
+
+  if (!senderIsBuyer && !senderIsSeller) {
+    return false;
+  }
+
+  const receiver =
+    senderIsBuyer
+      ? negotiation.sellerChatId
+      : negotiation.buyerChatId;
+
+  addNegotiationMessage(
+    negotiation,
+    chatId,
+    text
+  );
+
+  await sendTelegram(
+    receiver,
+    t(receiver, "messageFromOther") +
+    String(text)
+  );
+
+  await notifyAdmin(
+    "💬 رسالة تفاوض\n\n" +
+    `🆔 التفاوض: #${negotiation.id}\n` +
+    `👤 من: ${chatId}\n` +
+    `👤 إلى: ${receiver}`
+  );
+
+  return true;
 }
 
-async function sendListing(chatId, listing, langChatId = chatId) {
-  const caption =
-    `📦 ${listing.product}\n\n` +
-    `📝 ${listing.description || "—"}\n` +
-    `💰 ${formatPrice(listing.price)}\n` +
-    `📍 ${listing.region}\n\n` +
-    `🆔 العرض #${listing.id}`;
+// ============================================================
+// LISTING DISPLAY
+// ============================================================
 
+function listingText(
+  chatId,
+  listing
+) {
+  return (
+    `🛍️ ${listing.product}\n\n` +
+    `${t(chatId, "listingPrice")} ` +
+    `${formatPrice(listing.price)}\n` +
+    `${t(chatId, "listingRegion")} ` +
+    `${listing.region}\n` +
+    `${t(chatId, "seller")} ` +
+    `${listing.sellerName || "غير معروف"}`
+  );
+}
+
+async function sendListing(
+  chatId,
+  listing,
+  viewerChatId = chatId
+) {
   const keyboard = {
     inline_keyboard: [
       [
         {
-          text: t(langChatId, "contact"),
-          callback_data: `contact_${listing.id}`
+          text: t(
+            viewerChatId,
+            "contactSeller"
+          ),
+          callback_data:
+            `contact_${listing.id}`
+        }
+      ],
+      [
+        {
+          text: t(
+            viewerChatId,
+            "makeOffer"
+          ),
+          callback_data:
+            `offer_${listing.id}`
         }
       ]
     ]
   };
 
-  if (listing.photos && listing.photos.length > 0) {
+  const caption =
+    listingText(
+      viewerChatId,
+      listing
+    );
+
+  if (
+    Array.isArray(listing.photos) &&
+    listing.photos.length > 0
+  ) {
     await sendPhoto(
       chatId,
       listing.photos[0],
       caption,
       keyboard
     );
-  } else {
-    await sendTelegram(chatId, caption, keyboard);
-  }
 
-  logActivity(chatId, "listing_viewed", {
-    listingId: listing.id,
-    product: listing.product
-  });
-
-  await notifyAdmin(
-    `👀 مشاهدة عرض\n\n` +
-    `🆔 العرض: #${listing.id}\n` +
-    `📦 المنتج: ${listing.product}\n` +
-    `👤 المستخدم: ${chatId}`
-  );
-}
-
-async function showBrowse(chatId) {
-  const listings = db.listings
-    .filter((listing) => listing.status === "active")
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 20);
-
-  if (listings.length === 0) {
-    await sendTelegram(chatId, t(chatId, "noListings"), {
-      inline_keyboard: [
-        [{ text: t(chatId, "back"), callback_data: "menu" }]
-      ]
-    });
-    return;
-  }
-
-  await sendTelegram(chatId, t(chatId, "browseTitle"));
-
-  for (const listing of listings) {
-    await sendListing(chatId, listing, chatId);
-  }
-}
-
-async function showSearchResults(chatId, results) {
-  if (!results.length) {
-    await sendTelegram(chatId, t(chatId, "noResults"), {
-      inline_keyboard: [
-        [{ text: t(chatId, "back"), callback_data: "menu" }]
-      ]
-    });
     return;
   }
 
   await sendTelegram(
     chatId,
-    `🔎 تم العثور على ${results.length} عرض مناسب:`
-  );
-
-  for (const listing of results.slice(0, 20)) {
-    await sendListing(chatId, listing, chatId);
-  }
-}
-
-async function notifyBuyerAboutListing(buyerChatId, listing) {
-  await sendTelegram(
-    buyerChatId,
-    `📦 وجدنا عرضًا قد يناسب طلبك!\n\n` +
-    `📦 ${listing.product}\n` +
-    `💰 ${formatPrice(listing.price)}\n` +
-    `📍 ${listing.region}`,
-    {
-      inline_keyboard: [
-        [
-          {
-            text: t(buyerChatId, "contact"),
-            callback_data: `contact_${listing.id}`
-          }
-        ]
-      ]
-    }
+    caption,
+    keyboard
   );
 }
 
-async function startNegotiation(buyerChatId, listingId) {
-  const listing = getListing(listingId);
+// ============================================================
+// BROWSE MARKETPLACE
+// ============================================================
 
-  if (!listing || listing.status !== "active") {
+async function showBrowse(chatId) {
+  logActivity(
+    chatId,
+    "browse_marketplace"
+  );
+
+  const listings =
+    db.listings
+      .filter(
+        listing =>
+          listing.status === "active"
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt) -
+          new Date(a.createdAt)
+      )
+      .slice(0, 20);
+
+  if (!listings.length) {
     await sendTelegram(
-      buyerChatId,
-      "❌ هذا العرض لم يعد متاحًا."
+      chatId,
+      t(chatId, "noListings"),
+      backKeyboard(chatId)
     );
+
     return;
   }
 
-  if (String(listing.sellerChatId) === String(buyerChatId)) {
-    await sendTelegram(
-      buyerChatId,
-      "❌ لا يمكنك التفاوض على عرضك الخاص."
+  await sendTelegram(
+    chatId,
+    t(chatId, "browseTitle")
+  );
+
+  for (const listing of listings) {
+    await sendListing(
+      chatId,
+      listing,
+      chatId
     );
-    return;
   }
-
-  const existing = db.negotiations.find(
-    (item) =>
-      item.status === "active" &&
-      item.listingId === Number(listingId) &&
-      String(item.buyerChatId) === String(buyerChatId)
-  );
-
-  if (existing) {
-    sessions[buyerChatId] = {
-      step: "negotiation",
-      negotiationId: existing.id
-    };
-
-    await sendTelegram(
-      buyerChatId,
-      t(buyerChatId, "negotiationText")
-    );
-    return;
-  }
-
-  const negotiation = createNegotiation(
-    buyerChatId,
-    listing.sellerChatId,
-    listing.id
-  );
-
-  sessions[buyerChatId] = {
-    step: "negotiation",
-    negotiationId: negotiation.id
-  };
-
-  sessions[listing.sellerChatId] = {
-    step: "negotiation",
-    negotiationId: negotiation.id
-  };
-
-  logActivity(buyerChatId, "negotiation_started", {
-    negotiationId: negotiation.id,
-    listingId: listing.id,
-    sellerChatId: listing.sellerChatId
-  });
-
-  await sendTelegram(
-    buyerChatId,
-    t(buyerChatId, "contacted")
-  );
-
-  await sendTelegram(
-    listing.sellerChatId,
-    t(listing.sellerChatId, "sellerNotice") +
-      `\n\n📦 ${listing.product}\n` +
-      `💰 ${formatPrice(listing.price)}\n` +
-      `📍 ${listing.region}\n\n` +
-      t(listing.sellerChatId, "negotiationText")
-  );
-
-  await sendTelegram(
-    buyerChatId,
-    t(buyerChatId, "negotiationStarted") +
-      "\n\n" +
-      t(buyerChatId, "negotiationText")
-  );
-
-  await notifyAdmin(
-    `💬 بدأ تفاوض جديد\n\n` +
-    `🆔 التفاوض: #${negotiation.id}\n` +
-    `🆔 العرض: #${listing.id}\n` +
-    `🛒 المشتري: ${buyerChatId}\n` +
-    `📦 البائع: ${listing.sellerChatId}\n` +
-    `📦 المنتج: ${listing.product}`
-  );
 }
 
-async function forwardNegotiationMessage(
-  fromChatId,
-  negotiation,
-  text
+// ============================================================
+// SEARCH RESULTS
+// ============================================================
+
+async function showSearchResults(
+  chatId,
+  results
 ) {
-  const receiver =
-    String(negotiation.buyerChatId) === String(fromChatId)
-      ? negotiation.sellerChatId
-      : negotiation.buyerChatId;
+  if (!results.length) {
+    await sendTelegram(
+      chatId,
+      t(chatId, "noListings"),
+      backKeyboard(chatId)
+    );
 
-  negotiation.messages.push({
-    fromChatId: String(fromChatId),
-    text,
-    createdAt: new Date().toISOString()
-  });
-
-  saveDb();
+    return;
+  }
 
   await sendTelegram(
-    receiver,
-    `💬 رسالة من الطرف الآخر:\n\n${text}`
+    chatId,
+    t(chatId, "browseTitle")
   );
 
-  await notifyAdmin(
-    `💬 رسالة تفاوض\n\n` +
-    `🆔 التفاوض: #${negotiation.id}\n` +
-    `👤 من: ${fromChatId}\n` +
-    `👤 إلى: ${receiver}`
-  );
+  for (const listing of results) {
+    await sendListing(
+      chatId,
+      listing,
+      chatId
+    );
+  }
 }
+
+// ============================================================
+// SELL PHOTO KEYBOARD
+// ============================================================
+
+function photoDoneKeyboard(chatId) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: t(chatId, "done"),
+          callback_data: "done_photos"
+        }
+      ],
+      [
+        {
+          text: t(chatId, "cancel"),
+          callback_data: "cancel"
+        }
+      ]
+    ]
+  };
+}
+
+// ============================================================
+// ACCOUNT
+// ============================================================
 
 async function showAccount(chatId) {
-  const user = db.users[chatId] || {};
-  const myListings = db.listings.filter(
-    (listing) => String(listing.sellerChatId) === String(chatId)
-  );
-  const myRequests = db.buyRequests.filter(
-    (request) => String(request.buyerChatId) === String(chatId)
-  );
-  const myDeals = db.deals.filter(
-    (deal) =>
-      String(deal.buyerChatId) === String(chatId) ||
-      String(deal.sellerChatId) === String(chatId)
-  );
+  const id = String(chatId);
+
+  const mine =
+    db.listings.filter(
+      listing =>
+        sameId(
+          listing.sellerChatId,
+          id
+        )
+    );
+
+  const requests =
+    db.buyRequests.filter(
+      request =>
+        sameId(
+          request.buyerChatId,
+          id
+        )
+    );
+
+  const deals =
+    db.deals.filter(
+      deal =>
+        sameId(
+          deal.buyerChatId,
+          id
+        ) ||
+        sameId(
+          deal.sellerChatId,
+          id
+        )
+    );
 
   const text =
     t(chatId, "accountText") +
-    `🆔 ID: ${chatId}\n` +
-    `🌐 اللغة: ${user.language || "—"}\n\n` +
-    `📦 عروض البيع: ${myListings.length}\n` +
-    `🛒 طلبات الشراء: ${myRequests.length}\n` +
-    `🤝 الصفقات: ${myDeals.length}`;
+    `📦 ${mine.length}\n` +
+    `🛒 ${requests.length}\n` +
+    `🤝 ${deals.length}`;
 
   await sendTelegram(
     chatId,
@@ -704,486 +1055,980 @@ async function showAccount(chatId) {
     accountKeyboard(chatId)
   );
 }
-async function showBrowse(chatId) {
-  logActivity(chatId, "browse_marketplace");
-  const active = db.listings.filter(x => x.status === "active").slice(0, 10);
 
-  if (!active.length) {
-    await sendTelegram(chatId, t(chatId, "noListings"), accountKeyboard(chatId));
-    return;
-  }
+// ============================================================
+// ACCOUNT LISTINGS
+// ============================================================
 
-  await sendTelegram(chatId, t(chatId, "browseTitle"));
-
-  for (const item of active) {
-    const caption =
-      `📌 #${item.id}\n\n` +
-      `🛒 ${item.product}\n` +
-      `💰 ${formatPrice(item.price)}\n` +
-      `📍 ${item.region}\n\n` +
-      `${item.description || ""}`;
-
-    if (item.photos?.length) {
-      await sendPhoto(chatId, item.photos[0], caption, {
-        inline_keyboard: [[
-          { text: t(chatId, "contact"), callback_data: `contact_${item.id}` }
-        ]]
-      });
-    } else {
-      await sendTelegram(chatId, caption, {
-        inline_keyboard: [[
-          { text: t(chatId, "contact"), callback_data: `contact_${item.id}` }
-        ]]
-      });
-    }
-
-    logActivity(chatId, "view_listing", { listingId: item.id });
-    await notifyAdmin(
-      `👀 مشاهدة عرض #${item.id}\n` +
-      `🛒 ${item.product}\n` +
-      `👤 المستخدم: ${chatId}`
+async function showMyListings(chatId) {
+  const listings =
+    db.listings.filter(
+      listing =>
+        sameId(
+          listing.sellerChatId,
+          chatId
+        )
     );
-  }
-}
 
-async function sendMarketplaceResults(chatId, session, results) {
-  if (!results.length) {
-    const request = createBuyRequest(chatId, session);
-    logActivity(chatId, "buy_request_created", { requestId: request.id });
-
+  if (!listings.length) {
     await sendTelegram(
       chatId,
-      t(chatId, "noResults") +
-      `\n\n🛒 ${session.product}\n💰 ${formatPrice(session.maxPrice)}\n📍 ${session.region}\n\n` +
-      t(chatId, "buySaved"),
-      {
-        inline_keyboard: [
-          [{ text: t(chatId, "browse"), callback_data: "browse" }],
-          [{ text: t(chatId, "back"), callback_data: "menu" }]
-        ]
-      }
+      t(chatId, "emptyAccount"),
+      backKeyboard(chatId)
     );
 
-    await notifyAdmin(
-      `🔔 طلب شراء جديد #${request.id}\n\n` +
-      `🛒 ${request.product}\n` +
-      `💰 حتى ${formatPrice(request.maxPrice)}\n` +
-      `📍 ${request.region}\n` +
-      `👤 المستخدم: ${request.buyerChatId}`
-    );
     return;
+  }
+
+  for (const listing of listings) {
+    await sendListing(
+      chatId,
+      listing,
+      chatId
+    );
   }
 
   await sendTelegram(
     chatId,
-    `🔎 وجدنا ${results.length} عرض/عروض مناسبة.`
+    t(chatId, "back"),
+    backKeyboard(chatId)
   );
-  for (const item of results) {
-    logActivity(chatId, "view_matching_listing", {
-      listingId: item.id,
-      product: session.product
-    });
-
-    const message =
-      `📌 عرض #${item.id}\n\n` +
-      `🛒 ${item.product}\n` +
-      `💰 ${formatPrice(item.price)}\n` +
-      `📍 ${item.region}\n\n` +
-      `📝 ${item.description || ""}`;
-
-    const markup = {
-      inline_keyboard: [[
-        { text: t(chatId, "contact"), callback_data: `contact_${item.id}` }
-      ]]
-    };
-
-    if (item.photos?.length) {
-      await sendPhoto(chatId, item.photos[0], message, markup);
-    } else {
-      await sendTelegram(chatId, message, markup);
-    }
-  }
 }
 
-function createNegotiation(buyerChatId, listing) {
-    const existing = db.negotiations.find(
-      n =>
-        n.listingId === listing.id &&
-        n.buyerChatId === String(buyerChatId) &&
-        n.status === "active"
+// ============================================================
+// ACCOUNT BUY REQUESTS
+// ============================================================
+
+async function showMyRequests(chatId) {
+  const requests =
+    db.buyRequests.filter(
+      request =>
+        sameId(
+          request.buyerChatId,
+          chatId
+        )
     );
-    if (existing) return existing;
-    const message =
-      `📌 عرض #${item.id}\n\n` +
-      `🛒 ${item.product}\n` +
-      `💰 ${formatPrice(item.price)}\n` +
-      `📍 ${item.region}\n\n` +
-      `📝 ${item.description || ""}`;
 
-    const markup = {
-      inline_keyboard: [[
-        { text: t(chatId, "contact"), callback_data: `contact_${item.id}` }
-      ]]
-    };
+  if (!requests.length) {
+    await sendTelegram(
+      chatId,
+      t(chatId, "emptyAccount"),
+      backKeyboard(chatId)
+    );
 
-    if (item.photos?.length) {
-      await sendPhoto(chatId, item.photos[0], message, markup);
-    } else {
-      await sendTelegram(chatId, message, markup);
-    }
+    return;
   }
+
+  for (const request of requests) {
+    await sendTelegram(
+      chatId,
+
+      "🛒 طلب شراء\n\n" +
+      `📦 ${request.product}\n` +
+      `💰 الحد الأقصى: ${formatPrice(request.maxPrice)}\n` +
+      `📍 ${request.region}\n` +
+      `📌 الحالة: ${request.status}`
+    );
+  }
+
+  await sendTelegram(
+    chatId,
+    t(chatId, "back"),
+    backKeyboard(chatId)
+  );
 }
 
-function createNegotiation(buyerChatId, listing) {
-  const existing = db.negotiations.find(
-    n =>
-      n.listingId === listing.id &&
-      n.buyerChatId === String(buyerChatId) &&
-      n.status === "active"
+// ============================================================
+// ACCOUNT DEALS
+// ============================================================
+
+async function showMyDeals(chatId) {
+  const deals =
+    db.deals.filter(
+      deal =>
+        sameId(
+          deal.buyerChatId,
+          chatId
+        ) ||
+        sameId(
+          deal.sellerChatId,
+          chatId
+        )
+    );
+
+  if (!deals.length) {
+    await sendTelegram(
+      chatId,
+      t(chatId, "emptyAccount"),
+      backKeyboard(chatId)
+    );
+
+    return;
+  }
+
+  for (const deal of deals) {
+    const role =
+      sameId(
+        deal.buyerChatId,
+        chatId
+      )
+        ? "🛒 مشتري"
+        : "📦 بائع";
+
+    await sendTelegram(
+      chatId,
+
+      "🤝 صفقة\n\n" +
+      `🆔 #${deal.id}\n` +
+      `${role}\n` +
+      `💰 السعر: ${formatPrice(deal.price)}\n` +
+      `💰 عمولتك: ` +
+      `${
+        sameId(
+          deal.buyerChatId,
+          chatId
+        )
+          ? formatPrice(
+              deal.buyerCommission
+            )
+          : formatPrice(
+              deal.sellerCommission
+            )
+      }\n` +
+      `📌 الحالة: ${deal.status}`
+    );
+  }
+
+  await sendTelegram(
+    chatId,
+    t(chatId, "back"),
+    backKeyboard(chatId)
   );
+}
 
-  if (existing) return existing;
+// ============================================================
+// WELCOME / MAIN MENU
+// ============================================================
 
-  const negotiation = {
-    id: db.counters.negotiation++,
-    listingId: listing.id,
-    buyerChatId: String(buyerChatId),
-    sellerChatId: String(listing.sellerChatId),
-    proposedPrice: listing.price,
-    status: "active",
-    createdAt: new Date().toISOString()
+async function askLanguage(chatId) {
+  await sendTelegram(
+    chatId,
+    TEXT.ar.lang,
+    languageKeyboard()
+  );
+}
+
+async function showWelcome(chatId) {
+  await sendTelegram(
+    chatId,
+    t(chatId, "welcome"),
+    {
+      inline_keyboard: [
+        [
+          {
+            text: t(chatId, "agree"),
+            callback_data: "agree"
+          }
+        ]
+      ]
+    }
+  );
+}
+
+async function showMainMenu(chatId) {
+  sessions[String(chatId)] = {
+    step: "menu"
   };
 
-  db.negotiations.push(negotiation);
-  saveDb();
-  return negotiation;
-}
-async function contactSeller(buyerChatId, listingId) {
-  const listing = db.listings.find(
-    x => x.id === listingId && x.status === "active"
+  await sendTelegram(
+    chatId,
+    t(chatId, "mainMenu"),
+    mainMenuKeyboard(chatId)
   );
+}
+
+// ============================================================
+// STAGE 2 END
+// ============================================================
+// المرحلة 3 ستُضاف مباشرة تحت هذا السطر.
+// ============================================================
+// ============================================================
+// TELEGRAM MARKETPLACE
+// المرحلة 3 من 3
+// ============================================================
+
+// ============================================================
+// PROFILE UPDATE
+// ============================================================
+
+function updateUserFromTelegram(message) {
+  if (!message?.from) {
+    return;
+  }
+
+  const chatId = String(message.chat.id);
+
+  setUser(chatId, {
+    firstName: message.from.first_name || "",
+    lastName: message.from.last_name || "",
+    username: message.from.username || ""
+  });
+}
+
+// ============================================================
+// CANCEL
+// ============================================================
+
+async function cancelSession(chatId) {
+  delete sessions[String(chatId)];
+
+  await sendTelegram(
+    chatId,
+    t(chatId, "mainMenu"),
+    mainMenuKeyboard(chatId)
+  );
+}
+
+// ============================================================
+// START NEGOTIATION
+// ============================================================
+
+async function startNegotiation(
+  buyerChatId,
+  listingId
+) {
+  const listing = findListing(listingId);
 
   if (!listing) {
-    await sendTelegram(buyerChatId, "❌ هذا العرض لم يعد متاحًا.");
-    return;
+    await sendTelegram(
+      buyerChatId,
+      t(buyerChatId, "error")
+    );
+
+    return null;
   }
 
-  if (String(listing.sellerChatId) === String(buyerChatId)) {
-    await sendTelegram(buyerChatId, "❌ لا يمكنك التواصل مع نفسك.");
-    return;
+  if (listing.status !== "active") {
+    await sendTelegram(
+      buyerChatId,
+      "❌ هذا الإعلان لم يعد متاحاً."
+    );
+
+    return null;
   }
 
-  const negotiation = createNegotiation(buyerChatId, listing);
+  if (
+    sameId(
+      listing.sellerChatId,
+      buyerChatId
+    )
+  ) {
+    await sendTelegram(
+      buyerChatId,
+      "❌ لا يمكنك التفاوض على إعلانك الخاص."
+    );
 
-  sessions[buyerChatId] = {
+    return null;
+  }
+
+  const negotiation =
+    createNegotiation(
+      buyerChatId,
+      listing.sellerChatId,
+      listing.id
+    );
+
+  sessions[String(buyerChatId)] = {
+    step: "negotiation",
+    negotiationId: negotiation.id
+  };
+
+  sessions[String(listing.sellerChatId)] = {
     step: "negotiation",
     negotiationId: negotiation.id
   };
 
   await sendTelegram(
     buyerChatId,
-    `💬 تم فتح التفاوض للعرض #${listing.id}.\n\n` +
-    `🛒 ${listing.product}\n` +
-    `💰 السعر المطلوب: ${formatPrice(listing.price)}\n\n` +
-    t(buyerChatId, "negotiationText")
+    t(buyerChatId, "negotiationStarted")
   );
 
-  sessions[listing.sellerChatId] = {
+  await sendTelegram(
+    listing.sellerChatId,
+    "💬 هناك مشتري يريد التفاوض على إعلانك.\n\n" +
+    `📦 المنتج: ${listing.product}\n` +
+    `💰 السعر المطلوب: ${formatPrice(listing.price)}\n\n` +
+    t(
+      listing.sellerChatId,
+      "negotiationStarted"
+    )
+  );
+
+  await notifyAdmin(
+    "💬 بدء تفاوض جديد\n\n" +
+    `🆔 التفاوض: #${negotiation.id}\n` +
+    `🆔 الإعلان: #${listing.id}\n` +
+    `👤 المشتري: ${buyerChatId}\n` +
+    `👤 البائع: ${listing.sellerChatId}`
+  );
+
+  return negotiation;
+}
+
+// ============================================================
+// START PRICE OFFER
+// ============================================================
+
+async function startPriceOffer(
+  buyerChatId,
+  listingId
+) {
+  const listing = findListing(listingId);
+
+  if (!listing) {
+    await sendTelegram(
+      buyerChatId,
+      t(buyerChatId, "error")
+    );
+
+    return null;
+  }
+
+  if (listing.status !== "active") {
+    await sendTelegram(
+      buyerChatId,
+      "❌ هذا الإعلان لم يعد متاحاً."
+    );
+
+    return null;
+  }
+
+  if (
+    sameId(
+      listing.sellerChatId,
+      buyerChatId
+    )
+  ) {
+    await sendTelegram(
+      buyerChatId,
+      "❌ لا يمكنك تقديم عرض على إعلانك الخاص."
+    );
+
+    return null;
+  }
+
+  const negotiation =
+    createNegotiation(
+      buyerChatId,
+      listing.sellerChatId,
+      listing.id
+    );
+
+  sessions[String(buyerChatId)] = {
+    step: "offer_price",
+    negotiationId: negotiation.id
+  };
+
+  sessions[String(listing.sellerChatId)] = {
     step: "negotiation",
     negotiationId: negotiation.id
   };
 
   await sendTelegram(
-    listing.sellerChatId,
-    t(listing.sellerChatId, "sellerNotice") +
-    `\n\n🆔 العرض: #${listing.id}\n` +
-    `🛒 ${listing.product}\n` +
-    `💰 ${formatPrice(listing.price)}\n\n` +
-    t(listing.sellerChatId, "negotiationText")
+    buyerChatId,
+    t(buyerChatId, "offerPrice")
   );
 
-  logActivity(buyerChatId, "negotiation_started", {
-    negotiationId: negotiation.id,
-    listingId
-  });
-
-  await notifyAdmin(
-    `💬 بدأ تفاوض #${negotiation.id}\n` +
-    `📦 العرض: #${listing.id}\n` +
-    `👤 المشتري: ${buyerChatId}\n` +
-    `👤 البائع: ${listing.sellerChatId}`
-  );
+  return negotiation;
 }
 
-async function forwardNegotiationMessage(chatId, text) {
-  const session = sessions[chatId];
-  const negotiation = db.negotiations.find(
-    n => n.id === session?.negotiationId && n.status === "active"
-  );
+// ============================================================
+// HANDLE CALLBACK QUERY
+// ============================================================
 
-  if (!negotiation) return false;
-
-  const other =
-    String(negotiation.buyerChatId) === String(chatId)
-      ? negotiation.sellerChatId
-      : negotiation.buyerChatId;
-
-  await sendTelegram(
-    other,
-    `💬 رسالة من الطرف الآخر:\n\n${text}`
-  );
-
-  logActivity(chatId, "negotiation_message", {
-    negotiationId: negotiation.id
-  });
-
-  return true;
-}
-
-async function createDeal(negotiation, agreedPrice) {
-  const deal = {
-    id: db.counters.deal++,
-    negotiationId: negotiation.id,
-    listingId: negotiation.listingId,
-    buyerChatId: negotiation.buyerChatId,
-    sellerChatId: negotiation.sellerChatId,
-    amount: agreedPrice,
-    commission: agreedPrice * 0.05,
-    buyerCommission: agreedPrice * 0.025,
-    sellerCommission: agreedPrice * 0.025,
-    status: "agreed",
-    createdAt: new Date().toISOString()
-  };
-
-  negotiation.status = "agreed";
-  negotiation.agreedPrice = agreedPrice;
-  db.deals.push(deal);
-  saveDb();
-
-  const listing = db.listings.find(x => x.id === negotiation.listingId);
-  if (listing) listing.status = "reserved";
-  saveDb();
-
-  await sendTelegram(
-    negotiation.buyerChatId,
-    `${t(negotiation.buyerChatId, "dealCreated")}\n\n` +
-    `🤝 الصفقة #${deal.id}\n` +
-    `💰 القيمة: ${formatPrice(deal.amount)}\n` +
-    `💵 عمولة المنصة: ${formatPrice(deal.commission)}`
-  );
-
-  await sendTelegram(
-    negotiation.sellerChatId,
-    `${t(negotiation.sellerChatId, "dealCreated")}\n\n` +
-    `🤝 الصفقة #${deal.id}\n` +
-    `💰 القيمة: ${formatPrice(deal.amount)}\n` +
-    `💵 عمولة المنصة: ${formatPrice(deal.commission)}`
-  );
-
-  await notifyAdmin(
-    `🤝 صفقة جديدة #${deal.id}\n\n` +
-    `📦 العرض: #${deal.listingId}\n` +
-    `💰 القيمة: ${formatPrice(deal.amount)}\n` +
-    `💵 العمولة: ${formatPrice(deal.commission)}\n` +
-    `👤 المشتري: ${deal.buyerChatId}\n` +
-    `👤 البائع: ${deal.sellerChatId}`
-  );
-
-  logActivity(negotiation.buyerChatId, "deal_created", {
-    dealId: deal.id,
-    listingId: deal.listingId
-  });
-}
 async function handleCallback(query) {
-  await answerCallback(query.id);
-  if (!query.message) return;
+  try {
+    await answerCallback(query.id);
 
-  const chatId = query.message.chat.id;
-  const data = query.data;
+    if (!query.message) {
+      return;
+    }
 
-  if (data.startsWith("lang_")) {
-    const language = data.slice(5);
-    if (!TEXT[language]) return;
+    const chatId =
+      String(query.message.chat.id);
 
-    setUser(chatId, { language });
-    logActivity(chatId, "language_selected", { language });
+    const data =
+      String(query.data || "");
+
+    updateUserFromTelegram(
+      query.message
+    );
+
+    // ========================================================
+    // LANGUAGE
+    // ========================================================
+
+    if (data.startsWith("lang_")) {
+      const language =
+        data.slice(5);
+
+      if (!TEXT[language]) {
+        return;
+      }
+
+      setUser(chatId, {
+        language
+      });
+
+      logActivity(
+        chatId,
+        "language_selected",
+        { language }
+      );
+
+      await showWelcome(chatId);
+
+      return;
+    }
+
+    // ========================================================
+    // AGREEMENT
+    // ========================================================
+
+    if (data === "agree") {
+      setUser(chatId, {
+        agreedAt: now()
+      });
+
+      logActivity(
+        chatId,
+        "entered_marketplace"
+      );
+
+      await showMainMenu(chatId);
+
+      return;
+    }
+
+    // ========================================================
+    // LANGUAGE GUARD
+    // ========================================================
+
+    if (!db.users[chatId]?.language) {
+      await askLanguage(chatId);
+      return;
+    }
+
+    // ========================================================
+    // MENU
+    // ========================================================
+
+    if (data === "menu") {
+      await showMainMenu(chatId);
+      return;
+    }
+
+    // ========================================================
+    // CANCEL
+    // ========================================================
+
+    if (data === "cancel") {
+      await cancelSession(chatId);
+      return;
+    }
+
+    // ========================================================
+    // BUY
+    // ========================================================
+
+    if (data === "buy") {
+      sessions[chatId] = {
+        step: "buy_product"
+      };
+
+      logActivity(
+        chatId,
+        "start_buy"
+      );
+
+      await sendTelegram(
+        chatId,
+        t(chatId, "chooseProduct")
+      );
+
+      return;
+    }
+
+    // ========================================================
+    // SELL
+    // ========================================================
+
+    if (data === "sell") {
+      sessions[chatId] = {
+        step: "sell_product",
+        photos: []
+      };
+
+      logActivity(
+        chatId,
+        "start_sell"
+      );
+
+      await sendTelegram(
+        chatId,
+        t(chatId, "sellProduct")
+      );
+
+      return;
+    }
+
+    // ========================================================
+    // BROWSE
+    // ========================================================
+
+    if (data === "browse") {
+      sessions[chatId] = {
+        step: "menu"
+      };
+
+      await showBrowse(chatId);
+
+      return;
+    }
+
+    // ========================================================
+    // ACCOUNT
+    // ========================================================
+
+    if (data === "account") {
+      await showAccount(chatId);
+      return;
+    }
+
+    // ========================================================
+    // ACCOUNT LISTINGS
+    // ========================================================
+
+    if (data === "account_listings") {
+      await showMyListings(chatId);
+      return;
+    }
+
+    // ========================================================
+    // ACCOUNT REQUESTS
+    // ========================================================
+
+    if (data === "account_requests") {
+      await showMyRequests(chatId);
+      return;
+    }
+
+    // ========================================================
+    // ACCOUNT DEALS
+    // ========================================================
+
+    if (data === "account_deals") {
+      await showMyDeals(chatId);
+      return;
+    }
+
+    // ========================================================
+    // CONTACT SELLER
+    // ========================================================
+
+    if (data.startsWith("contact_")) {
+      const listingId =
+        Number(data.slice(8));
+
+      await startNegotiation(
+        chatId,
+        listingId
+      );
+
+      return;
+    }
+
+    // ========================================================
+    // MAKE OFFER
+    // ========================================================
+
+    if (data.startsWith("offer_")) {
+      const listingId =
+        Number(data.slice(6));
+
+      await startPriceOffer(
+        chatId,
+        listingId
+      );
+
+      return;
+    }
+
+    // ========================================================
+    // DONE PHOTOS
+    // ========================================================
+
+    if (data === "done_photos") {
+      const session =
+        sessions[chatId];
+
+      if (
+        !session ||
+        session.step !== "sell_photos"
+      ) {
+        await sendTelegram(
+          chatId,
+          t(chatId, "error")
+        );
+
+        return;
+      }
+
+      if (
+        !Array.isArray(session.photos) ||
+        session.photos.length === 0
+      ) {
+        await sendTelegram(
+          chatId,
+          t(chatId, "photoRequired")
+        );
+
+        return;
+      }
+
+      if (
+        !session.product ||
+        !session.price ||
+        !session.region
+      ) {
+        await sendTelegram(
+          chatId,
+          t(chatId, "error")
+        );
+
+        return;
+      }
+
+      const listing =
+        createListing(
+          chatId,
+          session
+        );
+
+      logActivity(
+        chatId,
+        "listing_published",
+        {
+          listingId: listing.id
+        }
+      );
+
+      delete sessions[chatId];
+
+      await sendTelegram(
+        chatId,
+        t(chatId, "listingPublished") +
+        "\n\n" +
+        `🆔 الإعلان: #${listing.id}\n` +
+        `📦 ${listing.product}\n` +
+        `💰 ${formatPrice(listing.price)}\n` +
+        `📍 ${listing.region}`
+      );
+
+      await notifyAdmin(
+        "📦 إعلان جديد\n\n" +
+        `🆔 الإعلان: #${listing.id}\n` +
+        `👤 البائع: ${chatId}\n` +
+        `📦 المنتج: ${listing.product}\n` +
+        `💰 السعر: ${formatPrice(listing.price)}\n` +
+        `📍 المنطقة: ${listing.region}\n` +
+        `📸 عدد الصور: ${listing.photos.length}`
+      );
+
+      await showMainMenu(chatId);
+
+      return;
+    }
+
+    // ========================================================
+    // DEAL APPROVE
+    // ========================================================
+
+    if (data.startsWith("deal_approve_")) {
+      const negotiationId =
+        Number(data.slice(13));
+
+      const negotiation =
+        findNegotiation(
+          negotiationId
+        );
+
+      if (
+        !negotiation ||
+        negotiation.status !== "active"
+      ) {
+        await sendTelegram(
+          chatId,
+          t(chatId, "negotiationUnavailable")
+        );
+
+        return;
+      }
+
+      const isBuyer =
+        sameId(
+          negotiation.buyerChatId,
+          chatId
+        );
+
+      const isSeller =
+        sameId(
+          negotiation.sellerChatId,
+          chatId
+        );
+
+      if (!isBuyer && !isSeller) {
+        return;
+      }
+
+      const session =
+        sessions[chatId];
+
+      let price =
+        session?.proposedPrice || null;
+
+      if (!price) {
+        const offers =
+          Array.isArray(
+            negotiation.offers
+          )
+            ? negotiation.offers
+            : [];
+
+        for (
+          let i = offers.length - 1;
+          i >= 0;
+          i--
+        ) {
+          if (
+            !sameId(
+              offers[i].fromChatId,
+              chatId
+            )
+          ) {
+            price =
+              Number(offers[i].price);
+            break;
+          }
+        }
+      }
+
+      if (
+        !price ||
+        !Number.isFinite(Number(price))
+      ) {
+        await sendTelegram(
+          chatId,
+          "❌ لا يوجد عرض سعر صالح للموافقة."
+        );
+
+        return;
+      }
+
+      const deal =
+        await createDeal(
+          negotiation,
+          price
+        );
+
+      if (!deal) {
+        await sendTelegram(
+          chatId,
+          t(chatId, "error")
+        );
+
+        return;
+      }
+
+      delete sessions[
+        String(
+          negotiation.buyerChatId
+        )
+      ];
+
+      delete sessions[
+        String(
+          negotiation.sellerChatId
+        )
+      ];
+
+      return;
+    }
+
+    // ========================================================
+    // DEAL OFFER / NEGOTIATE
+    // ========================================================
+
+    if (data.startsWith("deal_offer_")) {
+      const negotiationId =
+        Number(data.slice(11));
+
+      const negotiation =
+        findNegotiation(
+          negotiationId
+        );
+
+      if (
+        !negotiation ||
+        negotiation.status !== "active"
+      ) {
+        await sendTelegram(
+          chatId,
+          t(chatId, "negotiationUnavailable")
+        );
+
+        return;
+      }
+
+      const isBuyer =
+        sameId(
+          negotiation.buyerChatId,
+          chatId
+        );
+
+      const isSeller =
+        sameId(
+          negotiation.sellerChatId,
+          chatId
+        );
+
+      if (!isBuyer && !isSeller) {
+        return;
+      }
+
+      sessions[chatId] = {
+        step: "offer_price",
+        negotiationId:
+          negotiation.id
+      };
+
+      await sendTelegram(
+        chatId,
+        t(chatId, "offerPrice")
+      );
+
+      return;
+    }
+  } catch (error) {
+    console.error(
+      "Callback error:",
+      error
+    );
+  }
+}
+
+// ============================================================
+// HANDLE PHOTO
+// ============================================================
+
+async function handlePhoto(message) {
+  const chatId =
+    String(message.chat.id);
+
+  updateUserFromTelegram(message);
+
+  if (!db.users[chatId]?.language) {
+    await askLanguage(chatId);
+    return;
+  }
+
+  if (!db.users[chatId]?.agreedAt) {
     await showWelcome(chatId);
     return;
   }
 
-  if (data === "agree") {
-    setUser(chatId, { agreedAt: new Date().toISOString() });
-    logActivity(chatId, "entered_marketplace");
-    await showMainMenu(chatId);
-    return;
-  }
+  const session =
+    sessions[chatId];
 
-  if (data === "menu") {
-    sessions[chatId] = { step: "menu" };
-    await showMainMenu(chatId);
-    return;
-  }
-
-  if (data === "buy") {
-    sessions[chatId] = { step: "buy_product" };
-    logActivity(chatId, "start_buy");
-    await sendTelegram(chatId, t(chatId, "chooseProduct"));
-    return;
-  }
-
-  if (data === "sell") {
-    sessions[chatId] = { step: "sell_product", photos: [] };
-    logActivity(chatId, "start_sell");
-    await sendTelegram(chatId, t(chatId, "sellProduct"));
-    return;
-  }
-
-  if (data === "browse") {
-    sessions[chatId] = { step: "menu" };
-    await showBrowse(chatId);
-    return;
-  }
-
-  if (data === "account") {
-    const mine = db.listings.filter(
-      x => String(x.sellerChatId) === String(chatId)
-    );
-    const buys = db.buyRequests.filter(
-      x => String(x.buyerChatId) === String(chatId)
-    );
-    const deals = db.deals.filter(
-      x =>
-        String(x.buyerChatId) === String(chatId) ||
-        String(x.sellerChatId) === String(chatId)
-    );
-
+  if (
+    !session ||
+    session.step !== "sell_photos"
+  ) {
     await sendTelegram(
       chatId,
-      t(chatId, "accountText") +
-      `📦 عروض البيع: ${mine.length}\n` +
-      `🛒 طلبات الشراء: ${buys.length}\n` +
-      `🤝 الصفقات: ${deals.length}`,
-      accountKeyboard(chatId)
-    );
-    return;
-  }
-  if (data === "done_photos") {
-    const session = sessions[chatId];
-    if (!session?.photos?.length) {
-      await sendTelegram(chatId, t(chatId, "photoRequired"));
-      return;
-    }
-
-    if (!session.product || !session.price || !session.region) {
-      await sendTelegram(chatId, t(chatId, "error"));
-      return;
-    }
-
-    const listing = createListing(chatId, session);
-    logActivity(chatId, "listing_published", { listingId: listing.id });
-
-    await sendTelegram(
-      chatId,
-      `${t(chatId, "listingPublished")}\n\n` +
-      `📌 العرض #${listing.id}\n` +
-      `🛒 ${listing.product}\n` +
-      `💰 ${formatPrice(listing.price)}\n` +
-      `📍 ${listing.region}`
+      "📸 إذا كنت تريد إضافة إعلان، اختر «بيع» من القائمة."
     );
 
-    await notifyAdmin(
-      `📦 عرض بيع جديد #${listing.id}\n\n` +
-      `🛒 ${listing.product}\n` +
-      `💰 ${formatPrice(listing.price)}\n` +
-      `📍 ${listing.region}\n` +
-      `📸 الصور: ${listing.photos.length}\n` +
-      `👤 البائع: ${listing.sellerChatId}`
-    );
-
-    sessions[chatId] = { step: "menu" };
-    await showMainMenu(chatId);
-    return;
-  }
-  if (data.startsWith("contact_")) {
-    const listingId = Number(data.slice(8));
-    if (Number.isInteger(listingId)) {
-      await contactSeller(chatId, listingId);
-    }
     return;
   }
 
-  if (data.startsWith("deal_approve_")) {
-    const negotiationId = Number(data.slice(13));
-    const negotiation = db.negotiations.find(
-      n => n.id === negotiationId && n.status === "active"
-    );
-    if (!negotiation) {
-      await sendTelegram(chatId, "❌ التفاوض غير متاح.");
-      return;
-    }
+  if (
+    !Array.isArray(session.photos)
+  ) {
+    session.photos = [];
+  }
 
-    const session = sessions[chatId];
-    const price = session?.proposedPrice;
-    if (!price) {
-      await sendTelegram(chatId, "❌ لا يوجد سعر متفق عليه.");
-      return;
-    }
+  const photos =
+    message.photo || [];
 
-    await createDeal(negotiation, price);
+  if (!photos.length) {
     return;
   }
 
-  if (data.startsWith("deal_offer_")) {
-    const negotiationId = Number(data.slice(11));
-    const negotiation = db.negotiations.find(
-      n => n.id === negotiationId && n.status === "active"
-    );
-    if (!negotiation) return;
+  const largestPhoto =
+    photos[photos.length - 1];
 
-    sessions[chatId] = {
-      step: "offer_price",
-      negotiationId
-    };
-
-    await sendTelegram(
-      chatId,
-      "💰 أرسل السعر الذي تقترحه لإتمام الصفقة."
+  if (largestPhoto.file_id) {
+    session.photos.push(
+      largestPhoto.file_id
     );
-    return;
   }
+
+  await sendTelegram(
+    chatId,
+    t(chatId, "morePhotos"),
+    photoDoneKeyboard(chatId)
+  );
 }
+
+// ============================================================
+// HANDLE TEXT MESSAGE
+// ============================================================
+
 async function handleMessage(message) {
-  const chatId = message.chat.id;
-  const text = (message.text || "").trim();
-
-  setUser(chatId, {
-    username: message.from?.username || null,
-    firstName: message.from?.first_name || null
-  });
-
-  if (message.photo?.length) {
-    const session = sessions[chatId];
-    if (session?.step === "sell_photos") {
-      session.photos.push(
-        message.photo[message.photo.length - 1].file_id
-      );
-      logActivity(chatId, "upload_listing_photo");
-      await sendTelegram(chatId, t(chatId, "morePhotos"), {
-        inline_keyboard: [[
-          { text: t(chatId, "done"), callback_data: "done_photos" }
-        ]]
-      });
-      return;
-    }
+  if (!message?.chat) {
+    return;
   }
+
+  const chatId =
+    String(message.chat.id);
+
+  updateUserFromTelegram(message);
+
+  const text =
+    typeof message.text === "string"
+      ? message.text.trim()
+      : "";
+
+  // ==========================================================
+  // START
+  // ==========================================================
 
   if (text === "/start") {
     setUser(chatId);
-    logActivity(chatId, "start");
+
+    logActivity(
+      chatId,
+      "start"
+    );
 
     if (!db.users[chatId]?.language) {
-      sessions[chatId] = { step: "language" };
+      sessions[chatId] = {
+        step: "language"
+      };
+
       await askLanguage(chatId);
+
       return;
     }
 
@@ -1192,225 +2037,325 @@ async function handleMessage(message) {
       return;
     }
 
-    sessions[chatId] = { step: "menu" };
     await showMainMenu(chatId);
+
     return;
   }
+
+  // ==========================================================
+  // LANGUAGE FIRST
+  // ==========================================================
 
   if (!db.users[chatId]?.language) {
+    sessions[chatId] = {
+      step: "language"
+    };
+
     await askLanguage(chatId);
-    return;
-  }
-  if (text === "/cancel") {
-    sessions[chatId] = { step: "menu" };
-    await sendTelegram(chatId, t(chatId, "cancel"));
-    await showMainMenu(chatId);
+
     return;
   }
 
-  if (text === "/menu") {
-    sessions[chatId] = { step: "menu" };
-    await showMainMenu(chatId);
+  // ==========================================================
+  // WELCOME AGREEMENT
+  // ==========================================================
+
+  if (!db.users[chatId]?.agreedAt) {
+    await showWelcome(chatId);
     return;
   }
 
-  if (text === "/account") {
-    await handleCallback({
-      id: "internal",
-      message: { chat: { id: chatId } },
-      data: "account"
-    });
+  // ==========================================================
+  // EMPTY TEXT
+  // ==========================================================
+
+  if (!text) {
     return;
   }
 
-  if (text === "/end") {
-    const session = sessions[chatId];
-    if (session?.step === "negotiation") {
-      const negotiation = db.negotiations.find(
-        n => n.id === session.negotiationId
+  const session =
+    sessions[chatId];
+
+  // ==========================================================
+  // BUY - PRODUCT
+  // ==========================================================
+
+  if (
+    session?.step === "buy_product"
+  ) {
+    session.product = text;
+
+    session.step =
+      "buy_max_price";
+
+    await sendTelegram(
+      chatId,
+      t(chatId, "chooseMaxPrice")
+    );
+
+    return;
+  }
+
+  // ==========================================================
+  // BUY - MAX PRICE
+  // ==========================================================
+
+  if (
+    session?.step === "buy_max_price"
+  ) {
+    const maxPrice =
+      parsePrice(text);
+
+    if (!maxPrice) {
+      await sendTelegram(
+        chatId,
+        t(chatId, "invalidPrice")
       );
-      if (negotiation) negotiation.status = "closed";
-      saveDb();
-      sessions[chatId] = { step: "menu" };
-      await sendTelegram(chatId, "❌ تم إنهاء التفاوض.");
-      await showMainMenu(chatId);
+
       return;
     }
-  }
 
-  const session = sessions[chatId];
+    session.maxPrice =
+      maxPrice;
 
-  if (session?.step === "buy_product") {
-    if (!text) return;
-    session.product = text;
-    session.step = "buy_max_price";
-    await sendTelegram(chatId, t(chatId, "chooseMax"));
+    session.step =
+      "buy_region";
+
+    await sendTelegram(
+      chatId,
+      t(chatId, "chooseRegion")
+    );
+
     return;
   }
 
-  if (session?.step === "buy_max_price") {
-    const price = parsePrice(text);
-    if (!price) {
-      await sendTelegram(chatId, t(chatId, "chooseMax"));
-      return;
-    }
-    session.maxPrice = price;
-    session.step = "buy_region";
-    await sendTelegram(chatId, t(chatId, "chooseRegion"));
-    return;
-  }
+  // ==========================================================
+  // BUY - REGION
+  // ==========================================================
 
-  if (session?.step === "buy_region") {
-    if (!text) return;
+  if (
+    session?.step === "buy_region"
+  ) {
     session.region = text;
-    session.step = "buy_results";
-    logActivity(chatId, "buy_search", {
-      product: session.product,
-      maxPrice: session.maxPrice,
-      region: session.region
-    });
 
-    await notifyAdmin(
-      `🔎 بحث شراء جديد\n\n` +
-      `🛒 المنتج: ${session.product}\n` +
-      `💰 الحد الأقصى: ${formatPrice(session.maxPrice)}\n` +
-      `📍 المنطقة: ${session.region}\n` +
-      `👤 المستخدم: ${chatId}`
+    const request =
+      createBuyRequest(
+        chatId,
+        session
+      );
+
+    logActivity(
+      chatId,
+      "buy_request_created",
+      {
+        buyRequestId:
+          request.id
+      }
     );
 
     await sendTelegram(
       chatId,
-      t(chatId, "searching") +
-      `\n\n🛒 ${session.product}\n💰 ${formatPrice(session.maxPrice)}\n📍 ${session.region}`
+      t(chatId, "searchStarted")
     );
 
-    const results = searchListings(
-      session.product,
-      session.maxPrice,
-      session.region
-    );
+    const results =
+      searchListings(
+        session.product,
+        session.maxPrice,
+        session.region
+      );
 
-    await sendMarketplaceResults(chatId, session, results);
-    return;
-  }
-    logActivity(chatId, "buy_search", {
-      product: session.product,
-      maxPrice: session.maxPrice,
-      region: session.region
-    });
+    delete sessions[chatId];
+
+    await showSearchResults(
+      chatId,
+      results
+    );
 
     await notifyAdmin(
-      `🔎 بحث شراء جديد\n\n` +
-      `🛒 المنتج: ${session.product}\n` +
-      `💰 الحد الأقصى: ${formatPrice(session.maxPrice)}\n` +
-      `📍 المنطقة: ${session.region}\n` +
-      `👤 المستخدم: ${chatId}`
+      "🛒 طلب شراء جديد\n\n" +
+      `🆔 الطلب: #${request.id}\n` +
+      `👤 المشتري: ${chatId}\n` +
+      `📦 المنتج: ${request.product}\n` +
+      `💰 الحد الأقصى: ${formatPrice(request.maxPrice)}\n` +
+      `📍 المنطقة: ${request.region}`
     );
+
+    return;
+  }
+
+  // ==========================================================
+  // SELL - PRODUCT
+  // ==========================================================
+
+  if (
+    session?.step === "sell_product"
+  ) {
+    session.product = text;
+
+    session.step =
+      "sell_price";
 
     await sendTelegram(
       chatId,
-      t(chatId, "searching") +
-      `\n\n🛒 ${session.product}\n💰 ${formatPrice(session.maxPrice)}\n📍 ${session.region}`
+      t(chatId, "sellPrice")
     );
 
-    const results = searchListings(
-      session.product,
-      session.maxPrice,
-      session.region
-    );
-
-    await sendMarketplaceResults(chatId, session, results);
-    return;
-  }
-  if (session?.step === "sell_product") {
-    if (!text) return;
-    session.product = text;
-    session.step = "sell_description";
-    await sendTelegram(chatId, t(chatId, "sellDescription"));
     return;
   }
 
-  if (session?.step === "sell_description") {
-    if (!text) return;
-    session.description = text;
-    session.step = "sell_price";
-    await sendTelegram(chatId, t(chatId, "sellPrice"));
-    return;
-  }
-  if (session?.step === "sell_price") {
-    const price = parsePrice(text);
+  // ==========================================================
+  // SELL - PRICE
+  // ==========================================================
+
+  if (
+    session?.step === "sell_price"
+  ) {
+    const price =
+      parsePrice(text);
+
     if (!price) {
-      await sendTelegram(chatId, t(chatId, "sellPrice"));
-      return;
-    }
-    session.price = price;
-    session.step = "sell_region";
-    await sendTelegram(chatId, t(chatId, "sellRegion"));
-    return;
-  }
+      await sendTelegram(
+        chatId,
+        t(chatId, "invalidPrice")
+      );
 
-  if (session?.step === "sell_region") {
-    if (!text) return;
-    session.region = text;
-    session.step = "sell_photos";
-    await sendTelegram(chatId, t(chatId, "photoRequired"), {
-      inline_keyboard: [[
-        { text: t(chatId, "done"), callback_data: "done_photos" }
-      ]]
-    });
-    return;
-  }
-  if (session?.step === "negotiation") {
-    if (text && await forwardNegotiationMessage(chatId, text)) {
-      return;
-    }
-  }
-
-  if (session?.step === "offer_price") {
-    const price = parsePrice(text);
-    if (!price) {
-      await sendTelegram(chatId, "❌ السعر غير صحيح. أرسل رقمًا.");
       return;
     }
 
-    session.proposedPrice = price;
+    session.price =
+      price;
 
-    const negotiation = db.negotiations.find(
-      n => n.id === session.negotiationId && n.status === "active"
+    session.step =
+      "sell_region";
+
+    await sendTelegram(
+      chatId,
+      t(chatId, "sellRegion")
     );
+
+    return;
+  }
+
+  // ==========================================================
+  // SELL - REGION
+  // ==========================================================
+
+  if (
+    session?.step === "sell_region"
+  ) {
+    if (!text) {
+      return;
+    }
+
+    session.region =
+      text;
+
+    session.step =
+      "sell_photos";
+
+    if (!Array.isArray(session.photos)) {
+      session.photos = [];
+    }
+
+    await sendTelegram(
+      chatId,
+      t(chatId, "photoRequired"),
+      photoDoneKeyboard(chatId)
+    );
+
+    return;
+  }
+
+  // ==========================================================
+  // NEGOTIATION MESSAGES
+  // ==========================================================
+
+  if (
+    session?.step === "negotiation"
+  ) {
+    const forwarded =
+      await forwardNegotiationMessage(
+        chatId,
+        text
+      );
+
+    if (forwarded) {
+      return;
+    }
+  }
+
+  // ==========================================================
+  // OFFER PRICE
+  // ==============================
+  if (session.step === "offer_price") {
+    const price = parsePrice(text);
+
+    if (!price) {
+      await sendTelegram(
+        token,
+        chatId,
+        "❌ الرجاء إدخال سعر صحيح."
+      );
+      return;
+    }
+
+    const negotiation = findNegotiation(session.negotiationId);
 
     if (!negotiation) {
-      await sendTelegram(chatId, "❌ التفاوض غير متاح.");
+      cancelSession(chatId);
+      await sendTelegram(
+        token,
+        chatId,
+        "❌ انتهت هذه المفاوضة أو لم تعد موجودة.",
+        mainMenuKeyboard()
+      );
       return;
     }
 
-    const other =
-      String(negotiation.buyerChatId) === String(chatId)
-        ? negotiation.sellerChatId
-        : negotiation.buyerChatId;
+    await addNegotiationOffer(
+      negotiation.id,
+      chatId,
+      price
+    );
 
-    sessions[other] = {
+    const other =
+      sameId(negotiation.buyerId, chatId)
+        ? negotiation.sellerId
+        : negotiation.buyerId;
+
+    const lang = getLanguage(other);
+
+    sessions[String(other)] = {
       step: "negotiation",
       negotiationId: negotiation.id,
       proposedPrice: price
     };
 
     await sendTelegram(
+      token,
       other,
-      `💰 الطرف الآخر اقترح ${formatPrice(price)} لإتمام الصفقة.\n\n` +
-      t(other, "dealOffer"),
+      "💰 تم إرسال عرض جديد.\n\n" +
+      "السعر المقترح: " +
+      formatPrice(price) +
+      "\n\n" +
+      "هل توافق على هذا السعر؟",
       {
         inline_keyboard: [
           [
             {
-              text: "🤝 موافق",
-              callback_data: `deal_approve_${negotiation.id}`
+              text: t(lang, "approve"),
+              callback_data: "deal_approve_" + negotiation.id
+            },
+            {
+              text: t(lang, "newOffer"),
+              callback_data: "deal_offer_" + negotiation.id
             }
           ],
           [
             {
-              text: "💬 تفاوض",
-              callback_data: `contact_${negotiation.listingId}`
+              text: t(lang, "cancel"),
+              callback_data: "cancel"
             }
           ]
         ]
@@ -1418,97 +2363,151 @@ async function handleMessage(message) {
     );
 
     await sendTelegram(
+      token,
       chatId,
-      `📨 تم إرسال عرض السعر ${formatPrice(price)} للطرف الآخر.`
+      "✅ تم إرسال عرضك.\n\n" +
+      "السعر المقترح: " +
+      formatPrice(price) +
+      "\n\n" +
+      "بانتظار رد الطرف الآخر."
     );
 
+    sessions[String(chatId)] = {
+      step: "negotiation",
+      negotiationId: negotiation.id
+    };
+
     return;
   }
 
-  await sendTelegram(chatId, "ℹ️ استخدم /start للبدء من جديد.");
+  // ==========================================================
+  // DEFAULT
+  // ==========================================================
+
+  await sendTelegram(
+    token,
+    chatId,
+    t(lang, "chooseAction"),
+    mainMenuKeyboard(lang)
+  );
 }
 
-async function handleWebhook(body) {
-  if (body.callback_query) {
-    await handleCallback(body.callback_query);
-    return;
-  }
+// ============================================================
+// WEBHOOK
+// ============================================================
 
-  if (body.message) {
-    await handleMessage(body.message);
+async function handleWebhook(update) {
+  if (!update) return;
+
+  try {
+    if (update.callback_query) {
+      await handleCallback(update.callback_query);
+      return;
+    }
+
+    if (update.message) {
+      const message = update.message;
+
+      if (message.photo) {
+        await handlePhoto(message);
+        return;
+      }
+
+      if (message.text) {
+        await handleMessage(message);
+        return;
+      }
+    }
+  } catch (error) {
+    console.error("Webhook error:", error);
+
+    const chatId =
+      update.message?.chat?.id ||
+      update.callback_query?.message?.chat?.id;
+
+    if (chatId) {
+      try {
+        await sendTelegram(
+          token,
+          chatId,
+          "❌ حدث خطأ غير متوقع. حاول مرة أخرى."
+        );
+      } catch (_) {}
+    }
   }
 }
 
-const server = http.createServer((req, res) => {
+// ============================================================
+// HTTP SERVER
+// ============================================================
+
+const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8"
+      "Content-Type": "text/plain; charset=utf-8"
     });
 
-    res.end(`
-      <!doctype html>
-      <html lang="ar" dir="rtl">
-      <head>
-        <meta charset="utf-8">
-        <meta
-          name="viewport"
-          content="width=device-width,initial-scale=1"
-        >
-      </head>
-      <body>
-        <h1>🛍️ Telegram Marketplace</h1>
-        <p>الخدمة تعمل بنجاح.</p>
-      </body>
-      </html>
-    `);
-
+    res.end("Telegram Marketplace is running successfully.");
     return;
   }
 
   if (req.method === "POST" && req.url === "/webhook") {
-    let data = "";
+    let body = "";
 
     req.on("data", chunk => {
-      data += chunk;
+      body += chunk;
+
+      if (body.length > 2 * 1024 * 1024) {
+        req.destroy();
+      }
     });
 
-    req.on("end", () => {
+    req.on("end", async () => {
       try {
-        const body = JSON.parse(data);
+        const update = JSON.parse(body);
 
+        // Telegram needs an immediate successful response.
         res.writeHead(200, {
-          "Content-Type": "text/plain"
+          "Content-Type": "application/json"
         });
 
-        res.end("OK");
+        res.end(JSON.stringify({
+          ok: true
+        }));
 
-        handleWebhook(body).catch(error => {
-          console.error("Webhook processing error:", error);
-        });
+        await handleWebhook(update);
+
       } catch (error) {
-        console.error("Webhook JSON error:", error);
+        console.error("Request error:", error);
 
-        res.writeHead(400, {
-          "Content-Type": "text/plain"
-        });
+        if (!res.headersSent) {
+          res.writeHead(400, {
+            "Content-Type": "application/json"
+          });
 
-        res.end("Bad Request");
+          res.end(JSON.stringify({
+            ok: false
+          }));
+        }
       }
     });
 
     return;
   }
 
-  res.writeHead(404);
+  res.writeHead(404, {
+    "Content-Type": "text/plain; charset=utf-8"
+  });
+
   res.end("Not Found");
 });
 
-if (!TELEGRAM_TOKEN) {
-  console.error("TELEGRAM_BOT_TOKEN is not configured");
-}
+// ============================================================
+// START SERVER
+// ============================================================
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(
-    `Telegram Marketplace server running on port ${PORT}`
+    `Telegram Marketplace running on port ${PORT}`
   );
 });
