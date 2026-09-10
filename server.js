@@ -363,16 +363,27 @@ function getUser(chatId) {
   return db.users[String(chatId)] || null;
 }
 
+function generateMemberId() {
+  const number = db.counters.member++;
+  return `TM-${String(number).padStart(6, "0")}`;
+}
+
 function setUser(chatId, data = {}) {
   const id = String(chatId);
 
   if (!db.users[id]) {
     db.users[id] = {
       chatId: id,
+      memberId: generateMemberId(),
       language: null,
       agreedAt: null,
+      name: null,
+      phone: null,
+      registeredAt: null,
       firstSeenAt: new Date().toISOString()
     };
+  } else if (!db.users[id].memberId) {
+    db.users[id].memberId = generateMemberId();
   }
 
   Object.assign(db.users[id], data);
