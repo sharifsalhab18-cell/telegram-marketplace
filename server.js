@@ -1238,6 +1238,43 @@ async function handleCallback(query) {
   }
 }
 
+// ضع هنا دالة sendTelegram كاملة
+async function sendTelegram(chatId, text, replyMarkup = null) {
+  if (!TELEGRAM_TOKEN) return;
+
+  const body = {
+    chat_id: chatId,
+    text: text
+  };
+
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
+  }
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }
+  );
+
+  if (!response.ok) {
+    console.error(
+      "Telegram sendMessage error:",
+      await response.text()
+    );
+  }
+}
+
+
+// =========================
+// handleMessage
+// =========================
+
 async function handleMessage(message) {
   const chatId = message.chat.id;
   const text = String(
