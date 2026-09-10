@@ -18,11 +18,12 @@ const DEFAULT_DB = {
   deals: [],
   activities: [],
   counters: {
-    listing: 1,
-    request: 1,
-    negotiation: 1,
-    deal: 1
-  }
+  listing: 1,
+  request: 1,
+  negotiation: 1,
+  deal: 1,
+  member: 1
+}
 };
 
 function loadDb() {
