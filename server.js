@@ -1248,31 +1248,81 @@ async function handleMessage(message) {
     username: message.from?.username || null,
     firstName: message.from?.first_name || null
   });
-if (sessions[chatId]?.step === "registration_name") {
-  if (!text) {
+
+  // =========================
+  // MANDATORY REGISTRATION
+  // =========================
+
+  if (sessions[chatId]?.step === "registration_name") {
+    if (!text) {
+      await sendTelegram(
+        chatId,
+        "❌ أرسل اسمًا صحيحًا من فضلك."
+      );
+      return;
+    }
+
+    setUser(chatId, {
+      name: text
+    });
+
+    sessions[chatId] = {
+      step: "registration_phone"
+    };
+
     await sendTelegram(
       chatId,
-      "❌ أرسل اسمًا صحيحًا من فضلك."
+      "📱 الآن أرسل رقم هاتفك.\n\n" +
+      "اضغط زر «مشاركة رقم هاتفي» لإكمال التسجيل."
     );
+
     return;
   }
 
-  setUser(chatId, {
-    name: text
-  });
+  if (sessions[chatId]?.step === "registration_phone") {
+    if (!message.contact?.phone_number) {
+      await sendTelegram(
+        chatId,
+        "📱 من فضلك اضغط زر «مشاركة رقم هاتفي» لإكمال التسجيل."
+      );
+      return;
+    }
 
-  sessions[chatId] = {
-    step: "registration_phone"
-  };
+    if (
+      message.contact.user_id &&
+      String(message.contact.user_id) !== String(chatId)
+    ) {
+      await sendTelegram(
+        chatId,
+        "❌ يجب مشاركة رقم الهاتف المرتبط بهذا الحساب."
+      );
+      return;
+    }
 
-  await sendTelegram(
-    chatId,
-    "📱 الآن أرسل رقم هاتفك.\n\n" +
-    "اضغط زر مشاركة رقم الهاتف أدناه."
-  );
+    setUser(chatId, {
+      phone: message.contact.phone_number,
+      registeredAt: new Date().toISOString()
+    });
 
-  return;
-}
+    sessions[chatId] = {
+      step: "menu"
+    };
+
+    const user = getUser(chatId);
+
+    await sendTelegram(
+      chatId,
+      `✅ تم التسجيل بنجاح!\n\n` +
+      `🆔 رقم عضويتك: ${user.memberId}\n\n` +
+      `يمكنك الآن استخدام السوق.`
+    );
+
+    logActivity(chatId, "registered");
+
+    await showMainMenu(chatId);
+    return;
+  }
+
   if (message.photo?.length) {
    const session = sessions[chatId];
 
