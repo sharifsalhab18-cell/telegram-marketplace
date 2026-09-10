@@ -1271,10 +1271,22 @@ async function handleMessage(message) {
     };
 
     await sendTelegram(
-      chatId,
-      "📱 الآن أرسل رقم هاتفك.\n\n" +
-      "اضغط زر «مشاركة رقم هاتفي» لإكمال التسجيل."
-    );
+  chatId,
+  "📱 الآن أرسل رقم هاتفك.\n\n" +
+  "اضغط زر «مشاركة رقم هاتفي» لإكمال التسجيل.",
+  {
+    keyboard: [
+      [
+        {
+          text: "📱 مشاركة رقم هاتفي",
+          request_contact: true
+        }
+      ]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: true
+  }
+);
 
     return;
   }
