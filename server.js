@@ -1042,17 +1042,29 @@ async function handleCallback(query) {
   }
 
   if (data === "agree") {
-    setUser(chatId, {
-      agreedAt: new Date().toISOString()
-    });
+  setUser(chatId, {
+    agreedAt: new Date().toISOString()
+  });
 
+  const user = getUser(chatId);
+
+  if (!user.name || !user.phone) {
     sessions[chatId] = {
-      step: "menu"
+      step: "registration_name"
     };
 
-    await showMenu(chatId);
+    await sendTelegram(
+      chatId,
+      "📝 للتسجيل في المنصة، أرسل اسمك."
+    );
+
     return;
   }
+
+  logActivity(chatId, "entered_marketplace");
+  await showMainMenu(chatId);
+  return;
+}
 
   if (data === "menu") {
     sessions[chatId] = {
@@ -1236,9 +1248,33 @@ async function handleMessage(message) {
     username: message.from?.username || null,
     firstName: message.from?.first_name || null
   });
+if (sessions[chatId]?.step === "registration_name") {
+  if (!text) {
+    await sendTelegram(
+      chatId,
+      "❌ أرسل اسمًا صحيحًا من فضلك."
+    );
+    return;
+  }
 
+  setUser(chatId, {
+    name: text
+  });
+
+  sessions[chatId] = {
+    step: "registration_phone"
+  };
+
+  await sendTelegram(
+    chatId,
+    "📱 الآن أرسل رقم هاتفك.\n\n" +
+    "اضغط زر مشاركة رقم الهاتف أدناه."
+  );
+
+  return;
+}
   if (message.photo?.length) {
-    const session = sessions[chatId];
+   const session = sessions[chatId];
 
     if (session?.step === "sell_photos") {
       session.photos.push(
