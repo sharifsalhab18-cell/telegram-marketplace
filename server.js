@@ -1234,6 +1234,34 @@ async function handleCallback(query) {
       price
     );
 
+    negotiation.status = "accepted";
+    saveDb();
+
+    await sendMessage(
+      negotiation.buyerChatId,
+      "✅ تم قبول عرض السعر!\n\n" +
+      "السعر المتفق عليه: " +
+      formatPrice(price) +
+      "\n\n" +
+      "🎉 تم إنشاء الصفقة."
+    );
+
+    sessions[negotiation.buyerChatId] = {
+      step: "menu"
+    };
+
+    sessions[negotiation.sellerChatId] = {
+      step: "menu"
+    };
+
+    await sendMessage(
+      chatId,
+      "✅ تم قبول العرض وإنشاء الصفقة."
+    );
+
+    await showMenu(negotiation.buyerChatId);
+    await showMenu(negotiation.sellerChatId);
+
     return;
   }
 }
