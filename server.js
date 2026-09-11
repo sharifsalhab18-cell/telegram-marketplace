@@ -1234,8 +1234,7 @@ async function handleCallback(query) {
       price
     );
 
-    negotiation.status = "accepted";
-    saveDb();
+    
 
     await sendMessage(
       negotiation.buyerChatId,
