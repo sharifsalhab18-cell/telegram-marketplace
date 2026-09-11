@@ -1653,10 +1653,68 @@ async function handleMessage(message) {
 
     return;
   }
+if (session?.step === "negotiation") {
+    if (!text) {
+      return;
+    }
 
-  if (session?.step === "negotiation") {
+    const negotiation = db.negotiations.find(
+      n => n.id === session.negotiationId
+    );
+
+    if (!negotiation || negotiation.status !== "active") {
+      sessions[chatId] = { step: "menu" };
+
+      await sendMessage(
+        chatId,
+        "❌ انتهى هذا التفاوض."
+      );
+
+      await showMenu(chatId);
+      return;
+    }
+
+    // المشتري يرسل رقمًا = عرض سعر
     if (
-      text &&
+      String(negotiation.buyerChatId) === String(chatId)
+    ) {
+      const proposedPrice = parsePrice(text);
+
+      if (proposedPrice !== null && proposedPrice > 0) {
+        negotiation.proposedPrice = proposedPrice;
+        saveDb();
+
+        await sendMessage(
+          negotiation.sellerChatId,
+          "💰 عرض سعر جديد\n\n" +
+          "السعر المقترح: " +
+          formatPrice(proposedPrice) +
+          "\n\n" +
+          "هل توافق على هذا السعر؟",
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: "✅ قبول العرض",
+                  callback_data: "approve_" + negotiation.id
+                }
+              ]
+            ]
+          }
+        );
+
+        await sendMessage(
+          chatId,
+          "📨 تم إرسال عرض السعر إلى البائع:\n" +
+          formatPrice(proposedPrice)
+        );
+
+        return;
+      }
+    }
+
+    // الرسائل العادية تستمر بالانتقال للطرف الآخر
+    if (
       await forwardNegotiation(
         chatId,
         text
@@ -1665,6 +1723,7 @@ async function handleMessage(message) {
       return;
     }
   }
+  
 
   await sendMessage(
     chatId,
